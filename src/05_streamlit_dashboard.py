@@ -1,33 +1,34 @@
 """
 05_streamlit_dashboard.py
-Dashboard ejecutivo para Herdez Smart-Supply.
+Dashboard simple para Herdez Smart-Supply.
 
 Objetivo:
-- Mostrar alertas de riesgo de quiebre de stock.
-- Mostrar recomendaciones del motor costo-beneficio.
-- Mostrar el brief del sistema de agentes A2A-lite.
-- Permitir simular escenarios de transferencia.
+- Mostrar alertas de quiebre de stock.
+- Mostrar recomendaciones costo-beneficio.
+- Mostrar el brief del agente A2A-lite.
+- Incluir un chat sencillo para explicar las decisiones.
 
-Principio de diseño:
-El dashboard NO inventa recomendaciones. Solo presenta datos generados por:
-1) Modelo XGBoost.
-2) Decision Engine determinista.
-3) Sistema de agentes A2A-lite para explicación ejecutiva.
+Cómo correr:
+    python -m streamlit run app.py
+    o
+    python -m streamlit run src/05_streamlit_dashboard.py
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 
-# -----------------------------------------------------------------------------
-# 1. Configuración general
-# -----------------------------------------------------------------------------
+# ============================================================
+# 1. CONFIGURACIÓN GENERAL
+# ============================================================
 
 st.set_page_config(
     page_title="Herdez Smart-Supply",
@@ -35,77 +36,109 @@ st.set_page_config(
     layout="wide",
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# ============================================================
+# 2. RUTAS ROBUSTAS DEL PROYECTO
+# ============================================================
+
+def get_project_root() -> Path:
+    """
+    Detecta la raíz del proyecto.
+
+    Si ejecutas:
+        streamlit run src/05_streamlit_dashboard.py
+    entonces __file__ está dentro de src/ y la raíz es la carpeta padre.
+
+    Si ejecutas:
+        streamlit run app.py
+    y app.py llama este archivo, también funciona si el working directory
+    es la raíz del proyecto.
+    """
+    current_file = Path(__file__).resolve()
+
+    if current_file.parent.name == "src":
+        return current_file.parent.parent
+
+    return current_file.parent
+
+
+PROJECT_ROOT = get_project_root()
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
+MODELS_DIR = PROJECT_ROOT / "models"
+DATA_DIR = PROJECT_ROOT / "data"
 
 
-# -----------------------------------------------------------------------------
-# 2. Funciones auxiliares de carga
-# -----------------------------------------------------------------------------
+# ============================================================
+# 3. FUNCIONES AUXILIARES DE CARGA
+# ============================================================
 
-@st.cache_data
-def load_csv(filename: str) -> pd.DataFrame:
-    """Carga un CSV desde outputs/ y estandariza fechas si existen."""
-    path = OUTPUTS_DIR / filename
+@st.cache_data(show_spinner=False)
+def load_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
-    df = pd.read_csv(path)
-    if "Fecha" in df.columns:
-        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
-    return df
+    return pd.read_csv(path)
 
 
-@st.cache_data
-def load_json(filename: str) -> dict[str, Any]:
-    """Carga un JSON desde outputs/. Si no existe, regresa diccionario vacío."""
-    path = OUTPUTS_DIR / filename
+@st.cache_data(show_spinner=False)
+def load_json(path: Path) -> Any:
     if not path.exists():
-        return {}
-    with open(path, "r", encoding="utf-8") as file:
-        return json.load(file)
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-@st.cache_data
-def load_markdown(filename: str) -> str:
-    """Carga un archivo Markdown desde outputs/."""
-    path = OUTPUTS_DIR / filename
+@st.cache_data(show_spinner=False)
+def load_text(path: Path) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8")
 
 
-def format_money(value: float | int | None) -> str:
-    """Formatea valores monetarios para lectura ejecutiva."""
-    if value is None or pd.isna(value):
-        return "$0"
-    return f"${value:,.0f} MXN"
+def money(value: Any) -> str:
+    try:
+        return f"${float(value):,.2f} MXN"
+    except Exception:
+        return "$0.00 MXN"
 
 
-def format_pct(value: float | int | None) -> str:
-    """Formatea probabilidades/tasas."""
-    if value is None or pd.isna(value):
+def pct(value: Any) -> str:
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except Exception:
         return "0.0%"
-    return f"{value * 100:.1f}%"
 
 
-# -----------------------------------------------------------------------------
-# 3. Carga de datos
-# -----------------------------------------------------------------------------
-
-recommendations = load_csv("decision_recommendations.csv")
-alerts = load_csv("scored_stockout_alerts.csv")
-model_metrics = load_csv("model_comparison_metrics.csv")
-risk_by_sku = load_csv("risk_by_sku.csv")
-risk_by_cedi = load_csv("risk_by_cedi.csv")
-agent_brief = load_markdown("agent_executive_brief_a2a_simple.md")
-agent_trace = load_json("agent_a2a_simple_trace.json")
-agent_artifacts = load_json("agent_a2a_simple_artifacts.json")
-agent_registry = load_json("agent_a2a_simple_registry.json")
+def safe_sum(df: pd.DataFrame, col: str) -> float:
+    if df.empty or col not in df.columns:
+        return 0.0
+    return float(pd.to_numeric(df[col], errors="coerce").fillna(0).sum())
 
 
-# -----------------------------------------------------------------------------
-# 4. Encabezado
-# -----------------------------------------------------------------------------
+def safe_mean(df: pd.DataFrame, col: str) -> float:
+    if df.empty or col not in df.columns:
+        return 0.0
+    return float(pd.to_numeric(df[col], errors="coerce").fillna(0).mean())
+
+
+# ============================================================
+# 4. CARGA DE ARCHIVOS DEL PIPELINE
+# ============================================================
+
+recommendations = load_csv(OUTPUTS_DIR / "decision_recommendations.csv")
+scored_alerts = load_csv(OUTPUTS_DIR / "scored_stockout_alerts.csv")
+model_metrics = load_csv(OUTPUTS_DIR / "model_comparison_metrics.csv")
+risk_by_sku = load_csv(OUTPUTS_DIR / "risk_by_sku.csv")
+risk_by_cedi = load_csv(OUTPUTS_DIR / "risk_by_cedi.csv")
+agent_registry = load_json(OUTPUTS_DIR / "agent_a2a_simple_registry.json")
+agent_artifacts = load_json(OUTPUTS_DIR / "agent_a2a_simple_artifacts.json")
+agent_trace = load_json(OUTPUTS_DIR / "agent_a2a_simple_trace.json")
+agent_brief = load_text(OUTPUTS_DIR / "agent_executive_brief_a2a_simple.md")
+eda_findings = load_text(OUTPUTS_DIR / "eda_business_findings.md")
+
+
+# ============================================================
+# 5. VALIDACIÓN INICIAL
+# ============================================================
 
 st.title("📦 Herdez Smart-Supply")
 st.caption(
@@ -114,354 +147,511 @@ st.caption(
 )
 
 if recommendations.empty:
-    st.error(
-        "No encontré `outputs/decision_recommendations.csv`. "
-        "Ejecuta primero los scripts 01, 02, 03 y 04."
-    )
+    st.error("No encontré `outputs/decision_recommendations.csv`.")
+    st.write("Ejecuta primero el pipeline desde la raíz del proyecto:")
     st.code(
         "python src/01_eda_target_features.py\n"
         "python src/02_train_models.py\n"
         "python src/03_decision_engine.py\n"
         "python src/04_agent_system_a2a_simple.py --mode fallback\n"
-        "streamlit run src/05_streamlit_dashboard.py",
+        "python -m streamlit run app.py",
         language="bash",
     )
     st.stop()
 
 
-# -----------------------------------------------------------------------------
-# 5. Filtros ejecutivos
-# -----------------------------------------------------------------------------
+# ============================================================
+# 6. FILTROS SENCILLOS
+# ============================================================
 
 st.sidebar.header("Filtros")
 
-sku_options = ["Todos"] + sorted(recommendations["SKU_ID"].dropna().unique().tolist())
-cedi_options = ["Todos"] + sorted(recommendations["CEDI_Destino"].dropna().unique().tolist())
-action_options = ["Todas"] + sorted(recommendations["Accion_Recomendada"].dropna().unique().tolist())
-risk_options = ["Todos"] + sorted(recommendations["Nivel_Riesgo"].dropna().unique().tolist())
+sku_options = sorted(recommendations["SKU_ID"].dropna().unique()) if "SKU_ID" in recommendations.columns else []
+cedi_options = sorted(recommendations["CEDI_Destino"].dropna().unique()) if "CEDI_Destino" in recommendations.columns else []
+action_options = sorted(recommendations["Accion_Recomendada"].dropna().unique()) if "Accion_Recomendada" in recommendations.columns else []
 
-selected_sku = st.sidebar.selectbox("SKU", sku_options)
-selected_cedi = st.sidebar.selectbox("CEDI destino", cedi_options)
-selected_action = st.sidebar.selectbox("Acción recomendada", action_options)
-selected_risk = st.sidebar.selectbox("Nivel de riesgo", risk_options)
+selected_skus = st.sidebar.multiselect("SKU", sku_options, default=sku_options)
+selected_cedis = st.sidebar.multiselect("CEDI destino", cedi_options, default=cedi_options)
+selected_actions = st.sidebar.multiselect("Acción", action_options, default=action_options)
 
 filtered = recommendations.copy()
-if selected_sku != "Todos":
-    filtered = filtered[filtered["SKU_ID"] == selected_sku]
-if selected_cedi != "Todos":
-    filtered = filtered[filtered["CEDI_Destino"] == selected_cedi]
-if selected_action != "Todas":
-    filtered = filtered[filtered["Accion_Recomendada"] == selected_action]
-if selected_risk != "Todos":
-    filtered = filtered[filtered["Nivel_Riesgo"] == selected_risk]
+
+if selected_skus and "SKU_ID" in filtered.columns:
+    filtered = filtered[filtered["SKU_ID"].isin(selected_skus)]
+
+if selected_cedis and "CEDI_Destino" in filtered.columns:
+    filtered = filtered[filtered["CEDI_Destino"].isin(selected_cedis)]
+
+if selected_actions and "Accion_Recomendada" in filtered.columns:
+    filtered = filtered[filtered["Accion_Recomendada"].isin(selected_actions)]
 
 
-# -----------------------------------------------------------------------------
-# 6. KPIs principales
-# -----------------------------------------------------------------------------
+# ============================================================
+# 7. KPIS EJECUTIVOS
+# ============================================================
 
-total_alerts = len(filtered)
-high_risk = int((filtered["Nivel_Riesgo"] == "Alto").sum()) if not filtered.empty else 0
-expected_loss = float(filtered["Perdida_Esperada_Sin_Actuar"].sum()) if not filtered.empty else 0.0
-net_benefit = float(filtered["Beneficio_Neto"].sum()) if not filtered.empty else 0.0
-transfer_units = int(filtered["Unidades_A_Transferir"].sum()) if not filtered.empty else 0
+st.subheader("1. Resumen ejecutivo")
 
-kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-kpi1.metric("Alertas priorizadas", f"{total_alerts}")
-kpi2.metric("Riesgo alto", f"{high_risk}")
-kpi3.metric("Pérdida esperada", format_money(expected_loss))
-kpi4.metric("Beneficio neto potencial", format_money(net_benefit))
-kpi5.metric("Unidades a transferir", f"{transfer_units:,}")
+col1, col2, col3, col4 = st.columns(4)
 
-st.divider()
+with col1:
+    st.metric("Alertas evaluadas", f"{len(filtered):,}")
 
+with col2:
+    high_risk_count = 0
+    if "Nivel_Riesgo" in filtered.columns:
+        high_risk_count = int((filtered["Nivel_Riesgo"].astype(str).str.lower() == "alto").sum())
+    st.metric("Alertas de riesgo alto", f"{high_risk_count:,}")
 
-# -----------------------------------------------------------------------------
-# 7. Tabs principales
-# -----------------------------------------------------------------------------
+with col3:
+    st.metric("Pérdida esperada", money(safe_sum(filtered, "Perdida_Esperada_Sin_Actuar")))
 
-tab_exec, tab_alerts, tab_agents, tab_model, tab_simulator, tab_arch = st.tabs(
-    [
-        "Resumen ejecutivo",
-        "Alertas y recomendaciones",
-        "Agentes A2A-lite",
-        "Modelo ML",
-        "Simulador",
-        "Arquitectura",
-    ]
-)
+with col4:
+    st.metric("Beneficio neto potencial", money(safe_sum(filtered, "Beneficio_Neto")))
 
+col5, col6, col7 = st.columns(3)
 
-# -----------------------------------------------------------------------------
-# Tab 1: Resumen ejecutivo
-# -----------------------------------------------------------------------------
+with col5:
+    st.metric("Costo de transferencia", money(safe_sum(filtered, "Costo_Transferencia")))
 
-with tab_exec:
-    st.subheader("Resumen ejecutivo")
-    st.write(
-        "Este tablero está diseñado para un Director de Supply Chain: muestra dónde existe "
-        "riesgo de quiebre, cuánto costaría no actuar y cuál es la recomendación operativa."
-    )
+with col6:
+    st.metric("Riesgo promedio", pct(safe_mean(filtered, "Riesgo_Probabilidad")))
 
-    if agent_brief:
-        st.markdown("### Brief generado por el agente")
-        st.markdown(agent_brief)
-    else:
-        st.info("No encontré el brief del agente. Ejecuta `04_agent_system_a2a_simple.py`.")
-
-    st.markdown("### Top recomendaciones por beneficio neto")
-    top_recs = filtered.sort_values("Beneficio_Neto", ascending=False).head(10)
-    st.dataframe(
-        top_recs[
-            [
-                "Fecha",
-                "SKU_ID",
-                "CEDI_Destino",
-                "Riesgo_Probabilidad",
-                "Accion_Recomendada",
-                "CEDI_Origen_Recomendado",
-                "Unidades_A_Transferir",
-                "Perdida_Esperada_Sin_Actuar",
-                "Beneficio_Neto",
-            ]
-        ],
-        use_container_width=True,
-        hide_index=True,
-    )
+with col7:
+    transfer_count = 0
+    if "Accion_Recomendada" in filtered.columns:
+        transfer_count = int((filtered["Accion_Recomendada"] == "TRANSFER_INVENTORY").sum())
+    st.metric("Transferencias sugeridas", f"{transfer_count:,}")
 
 
-# -----------------------------------------------------------------------------
-# Tab 2: Alertas y recomendaciones
-# -----------------------------------------------------------------------------
+# ============================================================
+# 8. TABLA PRINCIPAL DE RECOMENDACIONES
+# ============================================================
 
-with tab_alerts:
-    st.subheader("Alertas y recomendaciones")
+st.subheader("2. Recomendaciones priorizadas")
 
-    left, right = st.columns(2)
+main_columns = [
+    "Fecha",
+    "SKU_ID",
+    "CEDI_Destino",
+    "Riesgo_Probabilidad",
+    "Nivel_Riesgo",
+    "Accion_Recomendada",
+    "CEDI_Origen_Recomendado",
+    "Unidades_A_Transferir",
+    "Perdida_Esperada_Sin_Actuar",
+    "Costo_Transferencia",
+    "Beneficio_Neto",
+    "Razon",
+]
 
-    with left:
-        st.markdown("#### Riesgo promedio por CEDI")
-        if not filtered.empty:
-            cedi_chart = (
-                filtered.groupby("CEDI_Destino", as_index=False)["Riesgo_Probabilidad"]
-                .mean()
-                .sort_values("Riesgo_Probabilidad", ascending=False)
-                .set_index("CEDI_Destino")
-            )
-            st.bar_chart(cedi_chart)
-        else:
-            st.info("No hay datos con los filtros actuales.")
+available_columns = [col for col in main_columns if col in filtered.columns]
 
-    with right:
-        st.markdown("#### Beneficio neto por SKU")
-        if not filtered.empty:
-            sku_chart = (
-                filtered.groupby("SKU_ID", as_index=False)["Beneficio_Neto"]
-                .sum()
-                .sort_values("Beneficio_Neto", ascending=False)
-                .set_index("SKU_ID")
-            )
-            st.bar_chart(sku_chart)
-        else:
-            st.info("No hay datos con los filtros actuales.")
+show_df = filtered[available_columns].copy()
 
-    st.markdown("#### Tabla detallada")
-    st.dataframe(
-        filtered.sort_values(["Beneficio_Neto", "Riesgo_Probabilidad"], ascending=False),
-        use_container_width=True,
-        hide_index=True,
-    )
+if "Riesgo_Probabilidad" in show_df.columns:
+    show_df["Riesgo_Probabilidad"] = show_df["Riesgo_Probabilidad"].apply(pct)
+
+for money_col in ["Perdida_Esperada_Sin_Actuar", "Costo_Transferencia", "Beneficio_Neto"]:
+    if money_col in show_df.columns:
+        show_df[money_col] = show_df[money_col].apply(money)
+
+st.dataframe(show_df, use_container_width=True, hide_index=True)
 
 
-# -----------------------------------------------------------------------------
-# Tab 3: Agentes A2A-lite
-# -----------------------------------------------------------------------------
+# ============================================================
+# 9. GRÁFICAS CLARAS
+# ============================================================
 
-with tab_agents:
-    st.subheader("Sistema de agentes A2A-lite")
-    st.write(
-        "El prototipo usa un patrón A2A-lite local: cada agente recibe un artefacto estructurado, "
-        "lo analiza y genera otro artefacto para el siguiente agente. En producción, cada agente "
-        "podría exponerse como servicio A2A real."
-    )
+st.subheader("3. Visualización de riesgos y beneficio")
 
-    st.markdown("### Registro de agentes")
+left, right = st.columns(2)
+
+with left:
+    if "Accion_Recomendada" in filtered.columns:
+        action_count = filtered["Accion_Recomendada"].value_counts().reset_index()
+        action_count.columns = ["Accion_Recomendada", "conteo"]
+        fig = px.bar(
+            action_count,
+            x="Accion_Recomendada",
+            y="conteo",
+            title="Acciones recomendadas",
+            text="conteo",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+with right:
+    if {"CEDI_Destino", "Beneficio_Neto"}.issubset(filtered.columns):
+        benefit_by_cedi = (
+            filtered.groupby("CEDI_Destino", as_index=False)["Beneficio_Neto"]
+            .sum()
+            .sort_values("Beneficio_Neto", ascending=False)
+        )
+        fig = px.bar(
+            benefit_by_cedi,
+            x="CEDI_Destino",
+            y="Beneficio_Neto",
+            title="Beneficio neto potencial por CEDI",
+            text_auto=".2s",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+left2, right2 = st.columns(2)
+
+with left2:
+    if not risk_by_sku.empty and {"SKU_ID", "tasa_riesgo"}.issubset(risk_by_sku.columns):
+        sku_plot = risk_by_sku.sort_values("tasa_riesgo", ascending=False)
+        fig = px.bar(
+            sku_plot,
+            x="SKU_ID",
+            y="tasa_riesgo",
+            title="Tasa histórica de riesgo por SKU",
+            text_auto=".1%",
+        )
+        fig.update_layout(xaxis_tickangle=-25)
+        st.plotly_chart(fig, use_container_width=True)
+
+with right2:
+    if not risk_by_cedi.empty and {"CEDI", "tasa_riesgo"}.issubset(risk_by_cedi.columns):
+        cedi_plot = risk_by_cedi.sort_values("tasa_riesgo", ascending=False)
+        fig = px.bar(
+            cedi_plot,
+            x="CEDI",
+            y="tasa_riesgo",
+            title="Tasa histórica de riesgo por CEDI",
+            text_auto=".1%",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+# ============================================================
+# 10. BRIEF DEL AGENTE A2A-LITE
+# ============================================================
+
+st.subheader("4. Brief del agente A2A-lite")
+
+if agent_brief:
+    st.markdown(agent_brief)
+else:
+    st.info("No encontré `agent_executive_brief_a2a_simple.md`. Ejecuta el script 04.")
+
+with st.expander("Ver agentes A2A-lite y trazabilidad"):
+    st.markdown("### Agentes registrados")
+
     if agent_registry:
-        registry_df = pd.DataFrame(agent_registry.get("agents", agent_registry))
-        st.dataframe(registry_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No encontré `agent_a2a_simple_registry.json`.")
+        if isinstance(agent_registry, dict):
+            registry_data = agent_registry.get("agents", [])
+        elif isinstance(agent_registry, list):
+            registry_data = agent_registry
+        else:
+            registry_data = []
 
-    st.markdown("### Traza de ejecución")
-    if agent_trace:
-        st.json(agent_trace)
+        st.dataframe(pd.DataFrame(registry_data), use_container_width=True, hide_index=True)
     else:
-        st.info("No encontré `agent_a2a_simple_trace.json`.")
+        st.info("No encontré registro de agentes.")
 
-    st.markdown("### Artefactos generados")
+    st.markdown("### Artefactos")
     if agent_artifacts:
         st.json(agent_artifacts)
     else:
-        st.info("No encontré `agent_a2a_simple_artifacts.json`.")
+        st.info("No encontré artefactos del agente.")
+
+    st.markdown("### Traza")
+    if agent_trace:
+        st.json(agent_trace)
+    else:
+        st.info("No encontré traza del agente.")
 
 
-# -----------------------------------------------------------------------------
-# Tab 4: Modelo ML
-# -----------------------------------------------------------------------------
+# ============================================================
+# 11. MODELO ML Y EDA
+# ============================================================
 
-with tab_model:
-    st.subheader("Modelo predictivo")
-    st.write(
-        "El modelo estima riesgo de quiebre dentro de la ventana operativa del lead time. "
-        "La salida del modelo alimenta el motor costo-beneficio, pero no toma la decisión final."
-    )
+st.subheader("5. Modelo predictivo y EDA")
 
+model_left, model_right = st.columns(2)
+
+with model_left:
+    st.markdown("#### Comparación de modelos")
     if not model_metrics.empty:
-        st.markdown("### Comparación de modelos")
-        st.dataframe(model_metrics, use_container_width=True, hide_index=True)
-
-        metric_chart = model_metrics.set_index("model")[["precision_risk", "recall_risk", "f1_risk", "roc_auc"]]
-        st.bar_chart(metric_chart)
+        cols = [c for c in ["model", "accuracy", "precision_risk", "recall_risk", "f1_risk", "roc_auc"] if c in model_metrics.columns]
+        st.dataframe(model_metrics[cols], use_container_width=True, hide_index=True)
     else:
-        st.info("No encontré métricas de modelos.")
+        st.info("No encontré `model_comparison_metrics.csv`.")
 
-    left, right = st.columns(2)
-    with left:
-        st.markdown("### Tasa histórica de riesgo por SKU")
-        if not risk_by_sku.empty:
-            st.bar_chart(risk_by_sku.set_index("SKU_ID")[["tasa_riesgo"]])
-        else:
-            st.info("No encontré risk_by_sku.csv")
-
-    with right:
-        st.markdown("### Tasa histórica de riesgo por CEDI")
-        if not risk_by_cedi.empty:
-            st.bar_chart(risk_by_cedi.set_index("CEDI")[["tasa_riesgo"]])
-        else:
-            st.info("No encontré risk_by_cedi.csv")
-
-
-# -----------------------------------------------------------------------------
-# Tab 5: Simulador
-# -----------------------------------------------------------------------------
-
-with tab_simulator:
-    st.subheader("Simulador de transferencia")
-    st.write(
-        "Este simulador permite modificar unidades a transferir para ver cómo cambia el beneficio neto. "
-        "Es útil para explicar el criterio costo-beneficio al Director de Supply Chain."
-    )
-
-    if filtered.empty:
-        st.info("No hay recomendaciones disponibles con los filtros actuales.")
+with model_right:
+    st.markdown("#### Hallazgos del EDA")
+    if eda_findings:
+        st.markdown(eda_findings)
     else:
-        options = filtered.index.tolist()
-        selected_idx = st.selectbox(
-            "Selecciona una alerta",
-            options,
-            format_func=lambda idx: (
-                f"{filtered.loc[idx, 'SKU_ID']} | {filtered.loc[idx, 'CEDI_Destino']} | "
-                f"{format_pct(filtered.loc[idx, 'Riesgo_Probabilidad'])} riesgo"
-            ),
-        )
-        row = filtered.loc[selected_idx]
-
-        st.markdown("### Caso seleccionado")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("SKU", str(row["SKU_ID"]))
-        c2.metric("CEDI destino", str(row["CEDI_Destino"]))
-        c3.metric("Riesgo", format_pct(row["Riesgo_Probabilidad"]))
-        c4.metric("Unidades necesarias", f"{int(row['Unidades_Necesarias']):,}")
-
-        max_units = max(int(row["Unidades_Necesarias"]), int(row["Unidades_A_Transferir"]), 1)
-        default_units = int(row["Unidades_A_Transferir"])
-        units = st.slider(
-            "Unidades a transferir",
-            min_value=0,
-            max_value=max_units,
-            value=min(default_units, max_units),
-            step=max(1, max_units // 100),
+        st.write(
+            "El EDA revisa calidad de datos, nulos, duplicados, distribuciones, "
+            "riesgo por SKU/CEDI y comportamiento temporal."
         )
 
-        unit_transfer_cost = 0.0
-        if row["Unidades_A_Transferir"] > 0:
-            unit_transfer_cost = row["Costo_Transferencia"] / row["Unidades_A_Transferir"]
-        else:
-            # aproximación conservadora si el motor no recomendó transferencia
-            unit_transfer_cost = row["Costo_Transferencia"] if row["Costo_Transferencia"] > 0 else 12.0
 
-        coverage_ratio = min(units / max(row["Unidades_Necesarias"], 1), 1.0)
-        simulated_transfer_cost = units * unit_transfer_cost
-        simulated_avoided_loss = row["Perdida_Esperada_Sin_Actuar"] * coverage_ratio
-        simulated_net_benefit = simulated_avoided_loss - simulated_transfer_cost
+# ============================================================
+# 12. ARQUITECTURA SIMPLE PARA EXPLICAR
+# ============================================================
 
-        s1, s2, s3, s4 = st.columns(4)
-        s1.metric("Cobertura del faltante", format_pct(coverage_ratio))
-        s2.metric("Costo transferencia", format_money(simulated_transfer_cost))
-        s3.metric("Pérdida evitada", format_money(simulated_avoided_loss))
-        s4.metric("Beneficio neto", format_money(simulated_net_benefit))
+st.subheader("6. Arquitectura de la solución")
 
-        if simulated_net_benefit > 0 and units > 0:
-            st.success("La simulación sugiere que la transferencia es financieramente conveniente.")
-        elif units == 0:
-            st.warning("No transferir unidades mantiene la pérdida esperada sin mitigación.")
-        else:
-            st.error("La simulación sugiere que el costo supera la pérdida evitada.")
-
-
-# -----------------------------------------------------------------------------
-# Tab 6: Arquitectura
-# -----------------------------------------------------------------------------
-
-with tab_arch:
-    st.subheader("Arquitectura del prototipo y ruta cloud-ready")
-
-    st.markdown(
-        """
-### MVP local-first
+st.markdown(
+    """
+**Flujo local-first del prototipo:**
 
 ```text
 Excel histórico
    ↓
-pandas / feature engineering
+EDA + Feature Engineering
    ↓
-XGBoost
+XGBoost predice riesgo de quiebre
    ↓
-Decision Engine determinista
+Decision Engine calcula costo-beneficio
    ↓
-Agentes A2A-lite + Gemini/LangChain opcional
+Agentes A2A-lite interpretan, critican y explican
    ↓
-Streamlit Dashboard
+Dashboard Streamlit para negocio y técnico
 ```
 
-### Producción cloud-ready en GCP
+**Idea clave:** el LLM no inventa los números. El modelo predice, el motor determinista calcula,
+y el agente explica la recomendación.
+"""
+)
 
-```text
-ERP / WMS / POS / Promociones / Clima
-   ↓
-Cloud Storage / Pub/Sub / Dataflow
-   ↓
-BigQuery
-   ↓
-Vertex AI Pipelines + Training + Model Registry
-   ↓
-Vertex AI Endpoint / Batch Prediction
-   ↓
-Agentes interoperables vía A2A
-   ↓
-Gemini / Function Calling / Cloud Run services
-   ↓
-Dashboard ejecutivo / Looker / Streamlit en Cloud Run
-```
 
-### Tesis técnica
+# ============================================================
+# 13. CHAT EJECUTIVO SIMPLE
+# ============================================================
 
-El prototipo es local-first y portable. La arquitectura separa tres responsabilidades:
+st.subheader("7. Chat con el agente")
+st.caption(
+    "Este chat responde usando los archivos generados por el pipeline. "
+    "Funciona en modo local y no depende de que Gemini esté activo."
+)
 
-1. **Predicción:** XGBoost estima riesgo de quiebre.
-2. **Decisión:** el motor determinista calcula costo-beneficio y valida reglas.
-3. **Explicación:** los agentes A2A-lite interpretan y comunican la recomendación.
 
-Así se reducen alucinaciones, se mantiene trazabilidad y se conserva una ruta clara hacia GCP.
-        """
+def build_context_summary(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "No hay recomendaciones disponibles."
+
+    total_alerts = len(df)
+    total_loss = money(safe_sum(df, "Perdida_Esperada_Sin_Actuar"))
+    total_benefit = money(safe_sum(df, "Beneficio_Neto"))
+    avg_risk = pct(safe_mean(df, "Riesgo_Probabilidad"))
+
+    top_row = df.sort_values("Beneficio_Neto", ascending=False).iloc[0] if "Beneficio_Neto" in df.columns else df.iloc[0]
+
+    return (
+        f"Alertas evaluadas: {total_alerts}. "
+        f"Riesgo promedio: {avg_risk}. "
+        f"Pérdida esperada total: {total_loss}. "
+        f"Beneficio neto potencial: {total_benefit}. "
+        f"Caso más relevante: {top_row.get('SKU_ID', 'N/A')} en {top_row.get('CEDI_Destino', 'N/A')}, "
+        f"acción {top_row.get('Accion_Recomendada', 'N/A')}, "
+        f"beneficio {money(top_row.get('Beneficio_Neto', 0))}."
     )
+
+
+def answer_locally(question: str, df: pd.DataFrame) -> str:
+    """
+    Chat simple basado en reglas.
+    Esto es intencional: para la demo es estable, auditable y no depende de internet.
+    """
+    q = question.lower().strip()
+
+    if df.empty:
+        return "No tengo recomendaciones cargadas. Ejecuta primero los scripts 01, 02, 03 y 04."
+
+    if any(word in q for word in ["resumen", "general", "estado", "qué pasa", "que pasa"]):
+        return build_context_summary(df)
+
+    if any(word in q for word in ["sku", "producto", "productos", "critico", "crítico"]):
+        if {"SKU_ID", "Beneficio_Neto"}.issubset(df.columns):
+            top = (
+                df.groupby("SKU_ID", as_index=False)
+                .agg(alertas=("SKU_ID", "count"), beneficio=("Beneficio_Neto", "sum"))
+                .sort_values("beneficio", ascending=False)
+                .head(5)
+            )
+            lines = ["Los SKUs más relevantes por beneficio neto potencial son:"]
+            for _, row in top.iterrows():
+                lines.append(f"- {row['SKU_ID']}: {int(row['alertas'])} alertas, {money(row['beneficio'])} de beneficio potencial.")
+            return "\n".join(lines)
+
+    if any(word in q for word in ["cedi", "centro", "almacen", "almacén"]):
+        if {"CEDI_Destino", "Beneficio_Neto"}.issubset(df.columns):
+            top = (
+                df.groupby("CEDI_Destino", as_index=False)
+                .agg(alertas=("CEDI_Destino", "count"), beneficio=("Beneficio_Neto", "sum"))
+                .sort_values("beneficio", ascending=False)
+            )
+            lines = ["Prioridad por CEDI destino:"]
+            for _, row in top.iterrows():
+                lines.append(f"- {row['CEDI_Destino']}: {int(row['alertas'])} alertas, {money(row['beneficio'])} de beneficio potencial.")
+            return "\n".join(lines)
+
+    if any(word in q for word in ["mover", "transferir", "transferencia", "inventario"]):
+        transfer_df = df[df["Accion_Recomendada"] == "TRANSFER_INVENTORY"] if "Accion_Recomendada" in df.columns else df
+        if transfer_df.empty:
+            return "No encontré recomendaciones de transferencia en el filtro actual. La recomendación sería revisar reabasto o monitorear."
+        row = transfer_df.sort_values("Beneficio_Neto", ascending=False).iloc[0]
+        return (
+            f"La transferencia más atractiva es para {row.get('SKU_ID', 'N/A')} en {row.get('CEDI_Destino', 'N/A')}. "
+            f"Se recomienda mover {int(row.get('Unidades_A_Transferir', 0))} unidades desde "
+            f"{row.get('CEDI_Origen_Recomendado', 'N/A')}. "
+            f"La pérdida esperada sin actuar es {money(row.get('Perdida_Esperada_Sin_Actuar', 0))}, "
+            f"el costo de transferencia es {money(row.get('Costo_Transferencia', 0))} y "
+            f"el beneficio neto estimado es {money(row.get('Beneficio_Neto', 0))}."
+        )
+
+    if any(word in q for word in ["modelo", "xgboost", "ml", "machine learning", "métrica", "metricas", "métricas"]):
+        if not model_metrics.empty:
+            best = model_metrics.sort_values("f1_risk", ascending=False).iloc[0] if "f1_risk" in model_metrics.columns else model_metrics.iloc[0]
+            return (
+                f"El modelo se compara contra baselines y modelos clásicos. "
+                f"El mejor F1 de riesgo en la tabla es {best.get('model', 'N/A')} con "
+                f"F1={best.get('f1_risk', 0):.3f}, recall={best.get('recall_risk', 0):.3f} y "
+                f"precision={best.get('precision_risk', 0):.3f}. "
+                f"La decisión de negocio no depende solo del modelo: después pasa por el motor costo-beneficio."
+            )
+        return "El modelo predictivo estima el riesgo de quiebre; luego el decision engine convierte ese riesgo en una acción de negocio."
+
+    if any(word in q for word in ["agente", "a2a", "llm", "gemini", "razonamiento"]):
+        return (
+            "La capa de agentes usa un patrón A2A-lite: RiskLens analiza riesgo, CostGuard revisa costo-beneficio, "
+            "PolicyCritic valida restricciones y ExecSupplyAI genera el brief ejecutivo. "
+            "El punto clave es que el LLM no inventa números: trabaja sobre artefactos estructurados generados por ML y reglas deterministas."
+        )
+
+    if any(word in q for word in ["arquitectura", "gcp", "cloud", "bigquery", "vertex"]):
+        return (
+            "La arquitectura local-first usa Excel, pandas, XGBoost, decision engine, agentes A2A-lite y Streamlit. "
+            "En GCP escalaría con Cloud Storage/PubSub/Dataflow para ingesta, BigQuery para datos, "
+            "Vertex AI para entrenamiento/despliegue/monitoring, y agentes desplegados como servicios interoperables vía A2A."
+        )
+
+    return (
+        "Puedo responder sobre: resumen ejecutivo, SKUs críticos, CEDIs críticos, transferencias recomendadas, "
+        "modelo XGBoost, agentes A2A-lite o arquitectura GCP. "
+        "Ejemplo: '¿qué SKU es más crítico?' o '¿por qué conviene mover inventario?'."
+    )
+
+
+def get_gemini_key() -> Optional[str]:
+    # Streamlit Cloud permite st.secrets; localmente usamos variables de entorno.
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            return st.secrets["GEMINI_API_KEY"]
+        if "GOOGLE_API_KEY" in st.secrets:
+            return st.secrets["GOOGLE_API_KEY"]
+    except Exception:
+        pass
+
+    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+def answer_with_gemini(question: str, df: pd.DataFrame) -> Optional[str]:
+    """
+    Opción LLM: intenta responder con Gemini usando LangChain.
+    Si falla, regresa None y se usa el fallback local.
+    """
+    api_key = get_gemini_key()
+    if not api_key:
+        return None
+
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+    except Exception:
+        return None
+
+    context = build_context_summary(df)
+    sample_cols = [
+        "SKU_ID",
+        "CEDI_Destino",
+        "Riesgo_Probabilidad",
+        "Accion_Recomendada",
+        "CEDI_Origen_Recomendado",
+        "Unidades_A_Transferir",
+        "Beneficio_Neto",
+        "Razon",
+    ]
+    sample_cols = [c for c in sample_cols if c in df.columns]
+    sample = df[sample_cols].head(8).to_dict(orient="records")
+
+    prompt = f"""
+# Tu identidad
+Eres ExecSupplyAI, un agente de IA para Supply Chain con experiencia en inventarios, CEDIs y costo-beneficio.
+
+# Tu misión
+Responder preguntas ejecutivas sobre el prototipo Herdez Smart-Supply usando solo los datos proporcionados.
+
+# Límites
+- No inventes cifras.
+- Si el dato no está en el contexto, dilo claramente.
+- Sé breve y orientado a negocio.
+- No cambies la recomendación calculada por el motor determinista.
+
+# Contexto resumido
+{context}
+
+# Muestra de recomendaciones
+{sample}
+
+# Pregunta del usuario
+{question}
+"""
+
+    try:
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            google_api_key=api_key,
+            temperature=0.2,
+        )
+        response = llm.invoke(prompt)
+        return getattr(response, "content", str(response))
+    except Exception:
+        return None
+
+
+use_gemini = st.checkbox("Usar Gemini si hay API key disponible", value=False)
+
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = [
+        {
+            "role": "assistant",
+            "content": "Hola, soy ExecSupplyAI. Pregúntame por SKUs críticos, CEDIs críticos, transferencias, modelo ML, agentes A2A-lite o arquitectura GCP.",
+        }
+    ]
+
+for msg in st.session_state.chat_messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+user_question = st.chat_input("Ejemplo: ¿por qué conviene mover inventario?")
+
+if user_question:
+    st.session_state.chat_messages.append({"role": "user", "content": user_question})
+    with st.chat_message("user"):
+        st.markdown(user_question)
+
+    if use_gemini:
+        answer = answer_with_gemini(user_question, filtered)
+        if answer is None:
+            answer = answer_locally(user_question, filtered)
+    else:
+        answer = answer_locally(user_question, filtered)
+
+    st.session_state.chat_messages.append({"role": "assistant", "content": answer})
+    with st.chat_message("assistant"):
+        st.markdown(answer)
+
+
+# ============================================================
+# 14. PIE DE PÁGINA
+# ============================================================
+
+st.divider()
+st.caption(
+    "Herdez Smart-Supply | MVP local-first: EDA + XGBoost + Decision Engine + A2A-lite + Streamlit."
+)
