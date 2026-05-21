@@ -1,657 +1,1087 @@
-"""
-05_streamlit_dashboard.py
-Dashboard simple para Herdez Smart-Supply.
+# ============================================================
+# 05_streamlit_dashboard.py
+# Herdez Smart Supply - Guía Interactiva de Supply Chain
+# ============================================================
+# Objetivo:
+# Convertir los datos de inventario y demanda en una experiencia visual,
+# clara y entendible para usuarios que NO conocen Supply Chain.
+#
+# Este archivo está diseñado para:
+# - Cargar datos automáticamente desde rutas comunes.
+# - Detectar columnas aunque tengan nombres distintos.
+# - Crear métricas simples de inventario.
+# - Mostrar filtros amigables.
+# - Explicar cada gráfico con lenguaje sencillo.
+# - Mostrar alertas visuales de desabasto, riesgo y exceso.
+# ============================================================
 
-Objetivo:
-- Mostrar alertas de quiebre de stock.
-- Mostrar recomendaciones costo-beneficio.
-- Mostrar el brief del agente A2A-lite.
-- Incluir un chat sencillo para explicar las decisiones.
 
-Cómo correr:
-    python -m streamlit run app.py
-    o
-    python -m streamlit run src/05_streamlit_dashboard.py
-"""
-
-from __future__ import annotations
-
-import json
-import os
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+import streamlit as st
 import pandas as pd
 import plotly.express as px
-import streamlit as st
+from pathlib import Path
+from datetime import datetime
 
 
 # ============================================================
-# 1. CONFIGURACIÓN GENERAL
+# CONFIGURACIÓN GENERAL DE LA APP
 # ============================================================
 
 st.set_page_config(
-    page_title="Herdez Smart-Supply",
+    page_title="Herdez Smart Supply | Guía Interactiva",
     page_icon="📦",
-    layout="wide",
+    layout="wide"
 )
 
 
 # ============================================================
-# 2. RUTAS ROBUSTAS DEL PROYECTO
+# ESTILOS VISUALES SIMPLES
 # ============================================================
 
-def get_project_root() -> Path:
+st.markdown(
     """
-    Detecta la raíz del proyecto.
+    <style>
+        .main-title {
+            font-size: 2.3rem;
+            font-weight: 800;
+            margin-bottom: 0.3rem;
+        }
 
-    Si ejecutas:
-        streamlit run src/05_streamlit_dashboard.py
-    entonces __file__ está dentro de src/ y la raíz es la carpeta padre.
+        .subtitle {
+            font-size: 1.1rem;
+            color: #555;
+            margin-bottom: 1.5rem;
+        }
 
-    Si ejecutas:
-        streamlit run app.py
-    y app.py llama este archivo, también funciona si el working directory
-    es la raíz del proyecto.
-    """
-    current_file = Path(__file__).resolve()
+        .section-card {
+            background-color: #f7f9fb;
+            padding: 1.2rem;
+            border-radius: 14px;
+            border: 1px solid #e6eaf0;
+            margin-bottom: 1rem;
+        }
 
-    if current_file.parent.name == "src":
-        return current_file.parent.parent
+        .simple-text {
+            font-size: 1rem;
+            line-height: 1.6;
+        }
 
-    return current_file.parent
-
-
-PROJECT_ROOT = get_project_root()
-OUTPUTS_DIR = PROJECT_ROOT / "outputs"
-MODELS_DIR = PROJECT_ROOT / "models"
-DATA_DIR = PROJECT_ROOT / "data"
-
-
-# ============================================================
-# 3. FUNCIONES AUXILIARES DE CARGA
-# ============================================================
-
-@st.cache_data(show_spinner=False)
-def load_csv(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame()
-    return pd.read_csv(path)
-
-
-@st.cache_data(show_spinner=False)
-def load_json(path: Path) -> Any:
-    if not path.exists():
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-@st.cache_data(show_spinner=False)
-def load_text(path: Path) -> str:
-    if not path.exists():
-        return ""
-    return path.read_text(encoding="utf-8")
-
-
-def money(value: Any) -> str:
-    try:
-        return f"${float(value):,.2f} MXN"
-    except Exception:
-        return "$0.00 MXN"
-
-
-def pct(value: Any) -> str:
-    try:
-        return f"{float(value) * 100:.1f}%"
-    except Exception:
-        return "0.0%"
-
-
-def safe_sum(df: pd.DataFrame, col: str) -> float:
-    if df.empty or col not in df.columns:
-        return 0.0
-    return float(pd.to_numeric(df[col], errors="coerce").fillna(0).sum())
-
-
-def safe_mean(df: pd.DataFrame, col: str) -> float:
-    if df.empty or col not in df.columns:
-        return 0.0
-    return float(pd.to_numeric(df[col], errors="coerce").fillna(0).mean())
-
-
-# ============================================================
-# 4. CARGA DE ARCHIVOS DEL PIPELINE
-# ============================================================
-
-recommendations = load_csv(OUTPUTS_DIR / "decision_recommendations.csv")
-scored_alerts = load_csv(OUTPUTS_DIR / "scored_stockout_alerts.csv")
-model_metrics = load_csv(OUTPUTS_DIR / "model_comparison_metrics.csv")
-risk_by_sku = load_csv(OUTPUTS_DIR / "risk_by_sku.csv")
-risk_by_cedi = load_csv(OUTPUTS_DIR / "risk_by_cedi.csv")
-agent_registry = load_json(OUTPUTS_DIR / "agent_a2a_simple_registry.json")
-agent_artifacts = load_json(OUTPUTS_DIR / "agent_a2a_simple_artifacts.json")
-agent_trace = load_json(OUTPUTS_DIR / "agent_a2a_simple_trace.json")
-agent_brief = load_text(OUTPUTS_DIR / "agent_executive_brief_a2a_simple.md")
-eda_findings = load_text(OUTPUTS_DIR / "eda_business_findings.md")
-
-
-# ============================================================
-# 5. VALIDACIÓN INICIAL
-# ============================================================
-
-st.title("📦 Herdez Smart-Supply")
-st.caption(
-    "Sistema local-first para predecir riesgo de quiebre de stock y recomendar acciones "
-    "basadas en costo-beneficio mediante ML + agentes A2A-lite."
+        .small-muted {
+            color: #666;
+            font-size: 0.9rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
-if recommendations.empty:
-    st.error("No encontré `outputs/decision_recommendations.csv`.")
-    st.write("Ejecuta primero el pipeline desde la raíz del proyecto:")
-    st.code(
-        "python src/01_eda_target_features.py\n"
-        "python src/02_train_models.py\n"
-        "python src/03_decision_engine.py\n"
-        "python src/04_agent_system_a2a_simple.py --mode fallback\n"
-        "python -m streamlit run app.py",
-        language="bash",
+
+# ============================================================
+# FUNCIONES AUXILIARES
+# ============================================================
+
+def normalize_text(value):
+    """
+    Normaliza texto para comparar columnas sin depender de mayúsculas,
+    espacios o guiones.
+    """
+    return str(value).lower().strip().replace(" ", "_").replace("-", "_")
+
+
+def find_column(df, possible_names):
+    """
+    Busca una columna en el DataFrame usando una lista de posibles nombres.
+
+    Esto evita que la app se rompa si el dataset usa nombres como:
+    - product
+    - producto
+    - product_name
+    - sku
+    """
+
+    normalized_columns = {
+        normalize_text(col): col
+        for col in df.columns
+    }
+
+    for name in possible_names:
+        normalized_name = normalize_text(name)
+
+        if normalized_name in normalized_columns:
+            return normalized_columns[normalized_name]
+
+    return None
+
+
+@st.cache_data
+def load_data():
+    """
+    Carga los datos desde rutas comunes del proyecto.
+
+    Puedes ajustar esta lista si tu archivo se llama diferente.
+    """
+
+    possible_paths = [
+        "data/supply_chain_data.csv",
+        "data/final_dataset.csv",
+        "data/inventory_data.csv",
+        "data/herdez_supply_chain.csv",
+        "outputs/final_dataset.csv",
+        "outputs/supply_chain_data.csv",
+        "outputs/inventory_data.csv",
+        "final_dataset.csv",
+        "supply_chain_data.csv",
+        "inventory_data.csv"
+    ]
+
+    for path in possible_paths:
+        file_path = Path(path)
+
+        if file_path.exists():
+            if file_path.suffix.lower() == ".csv":
+                return pd.read_csv(file_path), str(file_path)
+
+            if file_path.suffix.lower() in [".xlsx", ".xls"]:
+                return pd.read_excel(file_path), str(file_path)
+
+            if file_path.suffix.lower() == ".parquet":
+                return pd.read_parquet(file_path), str(file_path)
+
+    return None, None
+
+
+def create_demo_data():
+    """
+    Crea datos de ejemplo si no se encuentra ningún archivo.
+
+    Esto sirve para que el dashboard pueda abrirse y demostrarse,
+    aunque todavía no exista un dataset cargado.
+    """
+
+    data = {
+        "producto": [
+            "Salsa Casera", "Salsa Verde", "Champiñones", "Atún", "Mermelada",
+            "Salsa Casera", "Salsa Verde", "Champiñones", "Atún", "Mermelada",
+            "Salsa Casera", "Salsa Verde", "Champiñones", "Atún", "Mermelada"
+        ],
+        "region": [
+            "Centro", "Centro", "Centro", "Centro", "Centro",
+            "Norte", "Norte", "Norte", "Norte", "Norte",
+            "Sur", "Sur", "Sur", "Sur", "Sur"
+        ],
+        "stock_actual": [
+            120, 45, 300, 80, 600,
+            70, 160, 40, 500, 90,
+            20, 250, 180, 60, 700
+        ],
+        "demanda_pronosticada": [
+            100, 90, 120, 100, 150,
+            120, 110, 80, 140, 130,
+            110, 100, 160, 100, 180
+        ],
+        "ventas": [
+            95, 85, 110, 98, 145,
+            115, 108, 75, 135, 125,
+            105, 95, 150, 95, 175
+        ],
+        "fecha": pd.date_range(start="2026-01-01", periods=15, freq="W")
+    }
+
+    return pd.DataFrame(data)
+
+
+def safe_numeric(series):
+    """
+    Convierte una columna a número sin romper la app.
+    Los valores inválidos se convierten en 0.
+    """
+    return pd.to_numeric(series, errors="coerce").fillna(0)
+
+
+def classify_inventory(stock, demand):
+    """
+    Clasifica el estado del inventario de forma sencilla.
+
+    La lógica es:
+    - Desabasto: no alcanza para cubrir la demanda.
+    - Riesgo: alcanza, pero con muy poco colchón.
+    - Saludable: parece suficiente.
+    - Exceso: hay demasiado inventario comparado con la demanda.
+    """
+
+    if demand <= 0:
+        if stock > 0:
+            return "Exceso"
+        return "Sin datos"
+
+    ratio = stock / demand
+
+    if ratio < 1:
+        return "Desabasto"
+    elif ratio < 1.3:
+        return "Riesgo"
+    elif ratio <= 2.5:
+        return "Saludable"
+    else:
+        return "Exceso"
+
+
+def status_priority(status):
+    """
+    Ordena los estados para que los más críticos aparezcan primero.
+    """
+    order = {
+        "Desabasto": 1,
+        "Riesgo": 2,
+        "Exceso": 3,
+        "Saludable": 4,
+        "Sin datos": 5
+    }
+
+    return order.get(status, 99)
+
+
+def format_number(value):
+    """
+    Formato simple para números grandes.
+    """
+    try:
+        return f"{value:,.0f}"
+    except Exception:
+        return value
+
+
+# ============================================================
+# ENCABEZADO
+# ============================================================
+
+st.markdown('<div class="main-title">📦 Herdez Smart Supply</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="subtitle">Una guía visual para entender inventario, demanda y riesgos de abastecimiento.</div>',
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# CARGA DE DATOS
+# ============================================================
+
+df, source_path = load_data()
+
+if df is None:
+    st.warning(
+        "No encontré automáticamente un archivo de datos. "
+        "Puedes cargar uno manualmente o usar datos de demostración."
+    )
+
+    uploaded_file = st.file_uploader(
+        "Carga tu archivo CSV o Excel",
+        type=["csv", "xlsx", "xls"]
+    )
+
+    if uploaded_file is not None:
+        if uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+
+        source_path = uploaded_file.name
+
+    else:
+        st.info("Usaré datos de demostración para que puedas ver cómo funciona el dashboard.")
+        df = create_demo_data()
+        source_path = "Datos de demostración"
+
+
+# ============================================================
+# DETECCIÓN AUTOMÁTICA DE COLUMNAS
+# ============================================================
+
+product_col = find_column(
+    df,
+    [
+        "producto", "product", "product_name", "nombre_producto",
+        "sku", "item", "material", "articulo", "artículo"
+    ]
+)
+
+region_col = find_column(
+    df,
+    [
+        "region", "región", "zona", "state", "estado",
+        "location", "ubicacion", "ubicación", "warehouse", "almacen", "almacén"
+    ]
+)
+
+stock_col = find_column(
+    df,
+    [
+        "stock_actual", "stock", "inventory", "inventory_level",
+        "inventario", "inventario_actual", "current_stock",
+        "available_stock", "existencias"
+    ]
+)
+
+demand_col = find_column(
+    df,
+    [
+        "demanda_pronosticada", "demanda", "demand",
+        "predicted_demand", "forecast", "forecast_demand",
+        "pronostico", "pronóstico", "demanda_estimada"
+    ]
+)
+
+sales_col = find_column(
+    df,
+    [
+        "ventas", "sales", "units_sold", "unidades_vendidas",
+        "sell_out", "venta"
+    ]
+)
+
+date_col = find_column(
+    df,
+    [
+        "fecha", "date", "week", "semana", "month",
+        "mes", "periodo", "period"
+    ]
+)
+
+status_existing_col = find_column(
+    df,
+    [
+        "estado_inventario", "inventory_status", "status",
+        "estado", "stock_status"
+    ]
+)
+
+
+# ============================================================
+# VALIDACIÓN MÍNIMA
+# ============================================================
+
+required_missing = []
+
+if product_col is None:
+    required_missing.append("producto")
+
+if stock_col is None:
+    required_missing.append("stock o inventario")
+
+if demand_col is None:
+    required_missing.append("demanda o pronóstico")
+
+if required_missing:
+    st.error(
+        "No pude identificar columnas esenciales en el archivo: "
+        + ", ".join(required_missing)
+    )
+
+    st.write("Columnas disponibles en tu archivo:")
+    st.write(list(df.columns))
+
+    st.stop()
+
+
+# ============================================================
+# PREPARACIÓN DE DATOS
+# ============================================================
+
+df = df.copy()
+
+df[stock_col] = safe_numeric(df[stock_col])
+df[demand_col] = safe_numeric(df[demand_col])
+
+if sales_col is not None:
+    df[sales_col] = safe_numeric(df[sales_col])
+
+if date_col is not None:
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+
+# Si no existe región, se crea una columna genérica.
+if region_col is None:
+    df["region_detectada"] = "Todas las regiones"
+    region_col = "region_detectada"
+
+# Si no existe estado de inventario, lo calculamos.
+if status_existing_col is None:
+    df["estado_inventario_calculado"] = df.apply(
+        lambda row: classify_inventory(row[stock_col], row[demand_col]),
+        axis=1
+    )
+    status_col = "estado_inventario_calculado"
+else:
+    status_col = status_existing_col
+
+# Métrica central: cobertura de inventario.
+# Se interpreta como cuántas veces el stock cubre la demanda esperada.
+df["cobertura_inventario"] = df.apply(
+    lambda row: row[stock_col] / row[demand_col] if row[demand_col] > 0 else 0,
+    axis=1
+)
+
+# Brecha entre stock y demanda.
+# Positivo: sobra stock.
+# Negativo: falta stock.
+df["brecha_stock_demanda"] = df[stock_col] - df[demand_col]
+
+
+# ============================================================
+# INTRODUCCIÓN INTUITIVA
+# ============================================================
+
+st.markdown(
+    """
+    <div class="section-card">
+        <h3>🧭 ¿Qué estamos viendo aquí?</h3>
+        <p class="simple-text">
+            Imagina que el inventario es como la despensa de una tienda.
+            Si hay muy poco producto, los clientes llegan y no encuentran lo que buscan.
+            Eso significa ventas perdidas.  
+            Pero si hay demasiado producto, el dinero se queda atrapado en cajas,
+            anaqueles o almacenes, y algunos productos pueden caducar o generar costos extra.
+        </p>
+        <p class="simple-text">
+            Esta guía te ayuda a responder tres preguntas sencillas:
+        </p>
+        <ul class="simple-text">
+            <li>¿Tenemos suficiente inventario para cubrir la demanda?</li>
+            <li>¿Dónde existe riesgo de quedarnos sin producto?</li>
+            <li>¿Dónde tenemos demasiado inventario detenido?</li>
+        </ul>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.caption(f"Fuente de datos: {source_path}")
+
+
+# ============================================================
+# SIDEBAR: FILTROS AMIGABLES
+# ============================================================
+
+st.sidebar.header("🔎 Explora paso a paso")
+
+st.sidebar.markdown(
+    """
+    Usa estos filtros como si fueran una lupa.
+    Puedes enfocarte en un producto, una región o un estado del inventario.
+    """
+)
+
+product_options = ["Todos"] + sorted(df[product_col].dropna().astype(str).unique().tolist())
+selected_product = st.sidebar.selectbox(
+    "Producto",
+    product_options
+)
+
+region_options = ["Todas"] + sorted(df[region_col].dropna().astype(str).unique().tolist())
+selected_region = st.sidebar.selectbox(
+    "Región / ubicación",
+    region_options
+)
+
+status_options = ["Todos"] + sorted(
+    df[status_col].dropna().astype(str).unique().tolist(),
+    key=status_priority
+)
+selected_status = st.sidebar.selectbox(
+    "Estado del inventario",
+    status_options
+)
+
+min_coverage = float(df["cobertura_inventario"].min())
+max_coverage = float(df["cobertura_inventario"].max())
+
+coverage_range = st.sidebar.slider(
+    "Rango de cobertura de inventario",
+    min_value=round(min_coverage, 2),
+    max_value=round(max_coverage, 2) if max_coverage > min_coverage else round(min_coverage + 1, 2),
+    value=(
+        round(min_coverage, 2),
+        round(max_coverage, 2) if max_coverage > min_coverage else round(min_coverage + 1, 2)
+    )
+)
+
+st.sidebar.info(
+    "La cobertura indica cuántas veces el inventario alcanza para cubrir la demanda. "
+    "Ejemplo: 1.0 significa que el stock apenas cubre la demanda esperada."
+)
+
+
+# ============================================================
+# APLICACIÓN DE FILTROS
+# ============================================================
+
+filtered_df = df.copy()
+
+if selected_product != "Todos":
+    filtered_df = filtered_df[
+        filtered_df[product_col].astype(str) == selected_product
+    ]
+
+if selected_region != "Todas":
+    filtered_df = filtered_df[
+        filtered_df[region_col].astype(str) == selected_region
+    ]
+
+if selected_status != "Todos":
+    filtered_df = filtered_df[
+        filtered_df[status_col].astype(str) == selected_status
+    ]
+
+filtered_df = filtered_df[
+    (filtered_df["cobertura_inventario"] >= coverage_range[0]) &
+    (filtered_df["cobertura_inventario"] <= coverage_range[1])
+]
+
+
+# ============================================================
+# MENSAJE SI LOS FILTROS NO TRAEN DATOS
+# ============================================================
+
+if filtered_df.empty:
+    st.warning(
+        "No hay datos con los filtros seleccionados. "
+        "Intenta ampliar el rango de cobertura o seleccionar otro producto/región."
     )
     st.stop()
 
 
 # ============================================================
-# 6. FILTROS SENCILLOS
+# RESUMEN EJECUTIVO CON ALERTAS VISUALES
 # ============================================================
 
-st.sidebar.header("Filtros")
+st.header("🚦 Resumen rápido del inventario")
 
-sku_options = sorted(recommendations["SKU_ID"].dropna().unique()) if "SKU_ID" in recommendations.columns else []
-cedi_options = sorted(recommendations["CEDI_Destino"].dropna().unique()) if "CEDI_Destino" in recommendations.columns else []
-action_options = sorted(recommendations["Accion_Recomendada"].dropna().unique()) if "Accion_Recomendada" in recommendations.columns else []
+total_stock = filtered_df[stock_col].sum()
+total_demand = filtered_df[demand_col].sum()
+coverage_avg = filtered_df["cobertura_inventario"].mean()
+stock_gap = total_stock - total_demand
 
-selected_skus = st.sidebar.multiselect("SKU", sku_options, default=sku_options)
-selected_cedis = st.sidebar.multiselect("CEDI destino", cedi_options, default=cedi_options)
-selected_actions = st.sidebar.multiselect("Acción", action_options, default=action_options)
-
-filtered = recommendations.copy()
-
-if selected_skus and "SKU_ID" in filtered.columns:
-    filtered = filtered[filtered["SKU_ID"].isin(selected_skus)]
-
-if selected_cedis and "CEDI_Destino" in filtered.columns:
-    filtered = filtered[filtered["CEDI_Destino"].isin(selected_cedis)]
-
-if selected_actions and "Accion_Recomendada" in filtered.columns:
-    filtered = filtered[filtered["Accion_Recomendada"].isin(selected_actions)]
-
-
-# ============================================================
-# 7. KPIS EJECUTIVOS
-# ============================================================
-
-st.subheader("1. Resumen ejecutivo")
+desabasto_count = (filtered_df[status_col].astype(str) == "Desabasto").sum()
+riesgo_count = (filtered_df[status_col].astype(str) == "Riesgo").sum()
+exceso_count = (filtered_df[status_col].astype(str) == "Exceso").sum()
+saludable_count = (filtered_df[status_col].astype(str) == "Saludable").sum()
 
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.metric("Alertas evaluadas", f"{len(filtered):,}")
+    st.metric(
+        label="Inventario total",
+        value=format_number(total_stock),
+        help="Cantidad total de producto disponible en el filtro seleccionado."
+    )
 
 with col2:
-    high_risk_count = 0
-    if "Nivel_Riesgo" in filtered.columns:
-        high_risk_count = int((filtered["Nivel_Riesgo"].astype(str).str.lower() == "alto").sum())
-    st.metric("Alertas de riesgo alto", f"{high_risk_count:,}")
+    st.metric(
+        label="Demanda esperada",
+        value=format_number(total_demand),
+        help="Cantidad que se espera vender o necesitar."
+    )
 
 with col3:
-    st.metric("Pérdida esperada", money(safe_sum(filtered, "Perdida_Esperada_Sin_Actuar")))
+    st.metric(
+        label="Brecha stock vs demanda",
+        value=format_number(stock_gap),
+        delta="Sobra stock" if stock_gap >= 0 else "Falta stock",
+        help="Stock menos demanda. Si es negativo, no alcanza el inventario."
+    )
 
 with col4:
-    st.metric("Beneficio neto potencial", money(safe_sum(filtered, "Beneficio_Neto")))
+    st.metric(
+        label="Cobertura promedio",
+        value=f"{coverage_avg:.2f}x",
+        delta="Bien" if coverage_avg >= 1.3 and coverage_avg <= 2.5 else "Revisar",
+        help="Cuántas veces el inventario cubre la demanda esperada."
+    )
 
-col5, col6, col7 = st.columns(3)
 
-with col5:
-    st.metric("Costo de transferencia", money(safe_sum(filtered, "Costo_Transferencia")))
+# Alertas interpretables para usuarios no técnicos.
+if desabasto_count > 0:
+    st.error(
+        f"🚨 Atención: hay {desabasto_count} registro(s) en desabasto. "
+        "Esto significa que el inventario no alcanza para cubrir la demanda esperada."
+    )
+elif riesgo_count > 0:
+    st.warning(
+        f"⚠️ Hay {riesgo_count} registro(s) en zona de riesgo. "
+        "Todavía hay inventario, pero el margen es bajo."
+    )
+else:
+    st.success(
+        "✅ No se detecta desabasto en la selección actual. "
+        "El inventario parece suficiente para cubrir la demanda."
+    )
 
-with col6:
-    st.metric("Riesgo promedio", pct(safe_mean(filtered, "Riesgo_Probabilidad")))
-
-with col7:
-    transfer_count = 0
-    if "Accion_Recomendada" in filtered.columns:
-        transfer_count = int((filtered["Accion_Recomendada"] == "TRANSFER_INVENTORY").sum())
-    st.metric("Transferencias sugeridas", f"{transfer_count:,}")
+if exceso_count > 0:
+    st.info(
+        f"📦 También hay {exceso_count} registro(s) con posible exceso de stock. "
+        "Esto puede significar dinero detenido en inventario."
+    )
 
 
 # ============================================================
-# 8. TABLA PRINCIPAL DE RECOMENDACIONES
+# EXPLICACIÓN DEL SEMÁFORO
 # ============================================================
 
-st.subheader("2. Recomendaciones priorizadas")
+with st.expander("🟢🟡🔴 ¿Cómo se interpreta el semáforo de inventario?"):
+    st.markdown(
+        """
+        - **Desabasto:** el stock es menor que la demanda esperada.  
+          Es la señal más crítica porque puede provocar ventas perdidas.
 
-main_columns = [
-    "Fecha",
-    "SKU_ID",
-    "CEDI_Destino",
-    "Riesgo_Probabilidad",
-    "Nivel_Riesgo",
-    "Accion_Recomendada",
-    "CEDI_Origen_Recomendado",
-    "Unidades_A_Transferir",
-    "Perdida_Esperada_Sin_Actuar",
-    "Costo_Transferencia",
-    "Beneficio_Neto",
-    "Razon",
+        - **Riesgo:** el stock alcanza, pero con muy poco margen.  
+          Si la demanda sube un poco, podríamos quedarnos sin producto.
+
+        - **Saludable:** el inventario parece suficiente y razonable.  
+          Es el punto más equilibrado.
+
+        - **Exceso:** hay mucho más inventario del necesario.  
+          No siempre es malo, pero puede significar dinero detenido, saturación de almacén o riesgo de caducidad.
+        """
+    )
+
+
+# ============================================================
+# GRÁFICO 1: COMPARACIÓN STOCK VS DEMANDA
+# ============================================================
+
+st.header("📊 1. Comparación de stock contra demanda")
+
+grouped_product = (
+    filtered_df
+    .groupby(product_col, as_index=False)
+    .agg({
+        stock_col: "sum",
+        demand_col: "sum",
+        "brecha_stock_demanda": "sum",
+        "cobertura_inventario": "mean"
+    })
+)
+
+grouped_product = grouped_product.sort_values(
+    by="brecha_stock_demanda",
+    ascending=True
+)
+
+chart_data = grouped_product.melt(
+    id_vars=[product_col],
+    value_vars=[stock_col, demand_col],
+    var_name="Métrica",
+    value_name="Cantidad"
+)
+
+fig_stock_demand = px.bar(
+    chart_data,
+    x=product_col,
+    y="Cantidad",
+    color="Métrica",
+    barmode="group",
+    title="Stock disponible vs demanda esperada por producto",
+    labels={
+        product_col: "Producto",
+        "Cantidad": "Cantidad",
+        "Métrica": "Indicador"
+    }
+)
+
+fig_stock_demand.update_layout(
+    xaxis_tickangle=-35,
+    legend_title_text="Indicador",
+    height=480
+)
+
+st.plotly_chart(fig_stock_demand, use_container_width=True)
+
+st.info(
+    """
+    **Guía de lectura:**  
+    Este gráfico compara cuánto producto tienes disponible contra cuánto se espera vender o necesitar.
+
+    - Si la barra de **stock** es más baja que la de **demanda**, puede haber desabasto.
+    - Si la barra de **stock** es mucho más alta que la de **demanda**, puede haber exceso.
+    - La comparación clave es visual: busca productos donde las dos barras estén muy separadas.
+    """
+)
+
+
+# ============================================================
+# GRÁFICO 2: ESTADO GENERAL DEL INVENTARIO
+# ============================================================
+
+st.header("🚦 2. Estado general del inventario")
+
+status_summary = (
+    filtered_df
+    .groupby(status_col, as_index=False)
+    .size()
+    .rename(columns={"size": "registros"})
+)
+
+fig_status = px.pie(
+    status_summary,
+    names=status_col,
+    values="registros",
+    title="Distribución de estados del inventario",
+    hole=0.45
+)
+
+fig_status.update_layout(height=430)
+
+st.plotly_chart(fig_status, use_container_width=True)
+
+st.info(
+    """
+    **Guía de lectura:**  
+    Este gráfico muestra qué parte del inventario está en estado saludable, riesgo, desabasto o exceso.
+
+    - Si crece la parte de **desabasto**, el negocio puede perder ventas.
+    - Si crece la parte de **exceso**, puede haber dinero atrapado en almacén.
+    - Lo ideal es que la mayor parte esté en **saludable**.
+    """
+)
+
+
+# ============================================================
+# GRÁFICO 3: COBERTURA DE INVENTARIO
+# ============================================================
+
+st.header("🧮 3. Cobertura de inventario por producto")
+
+coverage_product = (
+    filtered_df
+    .groupby(product_col, as_index=False)
+    .agg({
+        "cobertura_inventario": "mean",
+        stock_col: "sum",
+        demand_col: "sum"
+    })
+)
+
+coverage_product = coverage_product.sort_values(
+    by="cobertura_inventario",
+    ascending=True
+)
+
+fig_coverage = px.bar(
+    coverage_product,
+    x=product_col,
+    y="cobertura_inventario",
+    title="Cobertura promedio de inventario",
+    labels={
+        product_col: "Producto",
+        "cobertura_inventario": "Cobertura de inventario"
+    }
+)
+
+fig_coverage.add_hline(
+    y=1,
+    line_dash="dash",
+    annotation_text="Límite mínimo: 1.0x",
+    annotation_position="top left"
+)
+
+fig_coverage.add_hline(
+    y=2.5,
+    line_dash="dash",
+    annotation_text="Posible exceso: 2.5x",
+    annotation_position="top right"
+)
+
+fig_coverage.update_layout(
+    xaxis_tickangle=-35,
+    height=480
+)
+
+st.plotly_chart(fig_coverage, use_container_width=True)
+
+st.info(
+    """
+    **Guía de lectura:**  
+    La cobertura responde una pregunta sencilla:  
+    **¿cuántas veces el inventario actual cubre la demanda esperada?**
+
+    - Menos de **1.0x**: el inventario no alcanza.
+    - Entre **1.3x y 2.5x**: zona razonable.
+    - Más de **2.5x**: puede existir exceso de inventario.
+
+    La métrica más importante aquí es la altura de la barra.
+    """
+)
+
+
+# ============================================================
+# GRÁFICO 4: ANÁLISIS POR REGIÓN
+# ============================================================
+
+st.header("🗺️ 4. Inventario por región")
+
+region_summary = (
+    filtered_df
+    .groupby(region_col, as_index=False)
+    .agg({
+        stock_col: "sum",
+        demand_col: "sum",
+        "brecha_stock_demanda": "sum",
+        "cobertura_inventario": "mean"
+    })
+)
+
+region_summary = region_summary.sort_values(
+    by="brecha_stock_demanda",
+    ascending=True
+)
+
+fig_region = px.bar(
+    region_summary,
+    x=region_col,
+    y="brecha_stock_demanda",
+    title="Brecha entre stock y demanda por región",
+    labels={
+        region_col: "Región",
+        "brecha_stock_demanda": "Stock - Demanda"
+    }
+)
+
+fig_region.add_hline(
+    y=0,
+    line_dash="dash",
+    annotation_text="Punto de equilibrio",
+    annotation_position="top left"
+)
+
+fig_region.update_layout(
+    xaxis_tickangle=-25,
+    height=450
+)
+
+st.plotly_chart(fig_region, use_container_width=True)
+
+st.info(
+    """
+    **Guía de lectura:**  
+    Este gráfico muestra si a una región le sobra o le falta inventario.
+
+    - Barras por encima de cero: hay más stock que demanda.
+    - Barras por debajo de cero: falta inventario.
+    - La línea en cero representa el punto de equilibrio.
+
+    La señal más importante son las barras negativas, porque indican posible desabasto.
+    """
+)
+
+
+# ============================================================
+# GRÁFICO 5: TENDENCIA EN EL TIEMPO, SI EXISTE FECHA
+# ============================================================
+
+if date_col is not None and filtered_df[date_col].notna().any():
+
+    st.header("📈 5. Evolución en el tiempo")
+
+    time_summary = (
+        filtered_df
+        .dropna(subset=[date_col])
+        .groupby(date_col, as_index=False)
+        .agg({
+            stock_col: "sum",
+            demand_col: "sum"
+        })
+        .sort_values(by=date_col)
+    )
+
+    time_chart = time_summary.melt(
+        id_vars=[date_col],
+        value_vars=[stock_col, demand_col],
+        var_name="Métrica",
+        value_name="Cantidad"
+    )
+
+    fig_time = px.line(
+        time_chart,
+        x=date_col,
+        y="Cantidad",
+        color="Métrica",
+        markers=True,
+        title="Evolución de stock y demanda en el tiempo",
+        labels={
+            date_col: "Fecha",
+            "Cantidad": "Cantidad",
+            "Métrica": "Indicador"
+        }
+    )
+
+    fig_time.update_layout(height=480)
+
+    st.plotly_chart(fig_time, use_container_width=True)
+
+    st.info(
+        """
+        **Guía de lectura:**  
+        Este gráfico ayuda a ver cómo cambian el inventario y la demanda con el tiempo.
+
+        - Si la línea de demanda sube y el stock no sube, puede aparecer desabasto.
+        - Si el stock sube mucho y la demanda baja, puede aparecer exceso.
+        - Lo ideal es que el inventario acompañe razonablemente el comportamiento de la demanda.
+        """
+    )
+
+
+# ============================================================
+# TABLA DE ALERTAS PRIORITARIAS
+# ============================================================
+
+st.header("🚨 Alertas prioritarias")
+
+alerts_df = filtered_df.copy()
+alerts_df["prioridad"] = alerts_df[status_col].apply(status_priority)
+
+alerts_df = alerts_df.sort_values(
+    by=["prioridad", "brecha_stock_demanda"],
+    ascending=[True, True]
+)
+
+columns_to_show = [
+    product_col,
+    region_col,
+    stock_col,
+    demand_col,
+    "brecha_stock_demanda",
+    "cobertura_inventario",
+    status_col
 ]
 
-available_columns = [col for col in main_columns if col in filtered.columns]
+if sales_col is not None:
+    columns_to_show.insert(4, sales_col)
 
-show_df = filtered[available_columns].copy()
+columns_to_show = [col for col in columns_to_show if col in alerts_df.columns]
 
-if "Riesgo_Probabilidad" in show_df.columns:
-    show_df["Riesgo_Probabilidad"] = show_df["Riesgo_Probabilidad"].apply(pct)
+critical_df = alerts_df[
+    alerts_df[status_col].astype(str).isin(["Desabasto", "Riesgo", "Exceso"])
+][columns_to_show]
 
-for money_col in ["Perdida_Esperada_Sin_Actuar", "Costo_Transferencia", "Beneficio_Neto"]:
-    if money_col in show_df.columns:
-        show_df[money_col] = show_df[money_col].apply(money)
-
-st.dataframe(show_df, use_container_width=True, hide_index=True)
-
-
-# ============================================================
-# 9. GRÁFICAS CLARAS
-# ============================================================
-
-st.subheader("3. Visualización de riesgos y beneficio")
-
-left, right = st.columns(2)
-
-with left:
-    if "Accion_Recomendada" in filtered.columns:
-        action_count = filtered["Accion_Recomendada"].value_counts().reset_index()
-        action_count.columns = ["Accion_Recomendada", "conteo"]
-        fig = px.bar(
-            action_count,
-            x="Accion_Recomendada",
-            y="conteo",
-            title="Acciones recomendadas",
-            text="conteo",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-with right:
-    if {"CEDI_Destino", "Beneficio_Neto"}.issubset(filtered.columns):
-        benefit_by_cedi = (
-            filtered.groupby("CEDI_Destino", as_index=False)["Beneficio_Neto"]
-            .sum()
-            .sort_values("Beneficio_Neto", ascending=False)
-        )
-        fig = px.bar(
-            benefit_by_cedi,
-            x="CEDI_Destino",
-            y="Beneficio_Neto",
-            title="Beneficio neto potencial por CEDI",
-            text_auto=".2s",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-left2, right2 = st.columns(2)
-
-with left2:
-    if not risk_by_sku.empty and {"SKU_ID", "tasa_riesgo"}.issubset(risk_by_sku.columns):
-        sku_plot = risk_by_sku.sort_values("tasa_riesgo", ascending=False)
-        fig = px.bar(
-            sku_plot,
-            x="SKU_ID",
-            y="tasa_riesgo",
-            title="Tasa histórica de riesgo por SKU",
-            text_auto=".1%",
-        )
-        fig.update_layout(xaxis_tickangle=-25)
-        st.plotly_chart(fig, use_container_width=True)
-
-with right2:
-    if not risk_by_cedi.empty and {"CEDI", "tasa_riesgo"}.issubset(risk_by_cedi.columns):
-        cedi_plot = risk_by_cedi.sort_values("tasa_riesgo", ascending=False)
-        fig = px.bar(
-            cedi_plot,
-            x="CEDI",
-            y="tasa_riesgo",
-            title="Tasa histórica de riesgo por CEDI",
-            text_auto=".1%",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-
-# ============================================================
-# 10. BRIEF DEL AGENTE A2A-LITE
-# ============================================================
-
-st.subheader("4. Brief del agente A2A-lite")
-
-if agent_brief:
-    st.markdown(agent_brief)
+if critical_df.empty:
+    st.success(
+        "No hay alertas críticas con los filtros actuales. "
+        "El inventario se ve estable en esta selección."
+    )
 else:
-    st.info("No encontré `agent_executive_brief_a2a_simple.md`. Ejecuta el script 04.")
+    st.warning(
+        "Estos son los registros que conviene revisar primero. "
+        "Aparecen ordenados por nivel de urgencia."
+    )
 
-with st.expander("Ver agentes A2A-lite y trazabilidad"):
-    st.markdown("### Agentes registrados")
+    st.dataframe(
+        critical_df,
+        use_container_width=True,
+        hide_index=True
+    )
 
-    if agent_registry:
-        if isinstance(agent_registry, dict):
-            registry_data = agent_registry.get("agents", [])
-        elif isinstance(agent_registry, list):
-            registry_data = agent_registry
-        else:
-            registry_data = []
-
-        st.dataframe(pd.DataFrame(registry_data), use_container_width=True, hide_index=True)
-    else:
-        st.info("No encontré registro de agentes.")
-
-    st.markdown("### Artefactos")
-    if agent_artifacts:
-        st.json(agent_artifacts)
-    else:
-        st.info("No encontré artefactos del agente.")
-
-    st.markdown("### Traza")
-    if agent_trace:
-        st.json(agent_trace)
-    else:
-        st.info("No encontré traza del agente.")
-
-
-# ============================================================
-# 11. MODELO ML Y EDA
-# ============================================================
-
-st.subheader("5. Modelo predictivo y EDA")
-
-model_left, model_right = st.columns(2)
-
-with model_left:
-    st.markdown("#### Comparación de modelos")
-    if not model_metrics.empty:
-        cols = [c for c in ["model", "accuracy", "precision_risk", "recall_risk", "f1_risk", "roc_auc"] if c in model_metrics.columns]
-        st.dataframe(model_metrics[cols], use_container_width=True, hide_index=True)
-    else:
-        st.info("No encontré `model_comparison_metrics.csv`.")
-
-with model_right:
-    st.markdown("#### Hallazgos del EDA")
-    if eda_findings:
-        st.markdown(eda_findings)
-    else:
-        st.write(
-            "El EDA revisa calidad de datos, nulos, duplicados, distribuciones, "
-            "riesgo por SKU/CEDI y comportamiento temporal."
-        )
-
-
-# ============================================================
-# 12. ARQUITECTURA SIMPLE PARA EXPLICAR
-# ============================================================
-
-st.subheader("6. Arquitectura de la solución")
-
-st.markdown(
-    """
-**Flujo local-first del prototipo:**
-
-```text
-Excel histórico
-   ↓
-EDA + Feature Engineering
-   ↓
-XGBoost predice riesgo de quiebre
-   ↓
-Decision Engine calcula costo-beneficio
-   ↓
-Agentes A2A-lite interpretan, critican y explican
-   ↓
-Dashboard Streamlit para negocio y técnico
-```
-
-**Idea clave:** el LLM no inventa los números. El modelo predice, el motor determinista calcula,
-y el agente explica la recomendación.
-"""
-)
-
-
-# ============================================================
-# 13. CHAT EJECUTIVO SIMPLE
-# ============================================================
-
-st.subheader("7. Chat con el agente")
-st.caption(
-    "Este chat responde usando los archivos generados por el pipeline. "
-    "Funciona en modo local y no depende de que Gemini esté activo."
-)
-
-
-def build_context_summary(df: pd.DataFrame) -> str:
-    if df.empty:
-        return "No hay recomendaciones disponibles."
-
-    total_alerts = len(df)
-    total_loss = money(safe_sum(df, "Perdida_Esperada_Sin_Actuar"))
-    total_benefit = money(safe_sum(df, "Beneficio_Neto"))
-    avg_risk = pct(safe_mean(df, "Riesgo_Probabilidad"))
-
-    top_row = df.sort_values("Beneficio_Neto", ascending=False).iloc[0] if "Beneficio_Neto" in df.columns else df.iloc[0]
-
-    return (
-        f"Alertas evaluadas: {total_alerts}. "
-        f"Riesgo promedio: {avg_risk}. "
-        f"Pérdida esperada total: {total_loss}. "
-        f"Beneficio neto potencial: {total_benefit}. "
-        f"Caso más relevante: {top_row.get('SKU_ID', 'N/A')} en {top_row.get('CEDI_Destino', 'N/A')}, "
-        f"acción {top_row.get('Accion_Recomendada', 'N/A')}, "
-        f"beneficio {money(top_row.get('Beneficio_Neto', 0))}."
+    st.caption(
+        "Tip: empieza revisando los productos en desabasto, después los de riesgo, "
+        "y al final los excesos de inventario."
     )
 
 
-def answer_locally(question: str, df: pd.DataFrame) -> str:
-    """
-    Chat simple basado en reglas.
-    Esto es intencional: para la demo es estable, auditable y no depende de internet.
-    """
-    q = question.lower().strip()
+# ============================================================
+# RECOMENDACIONES AUTOMÁTICAS SIMPLES
+# ============================================================
 
-    if df.empty:
-        return "No tengo recomendaciones cargadas. Ejecuta primero los scripts 01, 02, 03 y 04."
+st.header("🧠 Recomendaciones rápidas")
 
-    if any(word in q for word in ["resumen", "general", "estado", "qué pasa", "que pasa"]):
-        return build_context_summary(df)
+recommendations = []
 
-    if any(word in q for word in ["sku", "producto", "productos", "critico", "crítico"]):
-        if {"SKU_ID", "Beneficio_Neto"}.issubset(df.columns):
-            top = (
-                df.groupby("SKU_ID", as_index=False)
-                .agg(alertas=("SKU_ID", "count"), beneficio=("Beneficio_Neto", "sum"))
-                .sort_values("beneficio", ascending=False)
-                .head(5)
-            )
-            lines = ["Los SKUs más relevantes por beneficio neto potencial son:"]
-            for _, row in top.iterrows():
-                lines.append(f"- {row['SKU_ID']}: {int(row['alertas'])} alertas, {money(row['beneficio'])} de beneficio potencial.")
-            return "\n".join(lines)
-
-    if any(word in q for word in ["cedi", "centro", "almacen", "almacén"]):
-        if {"CEDI_Destino", "Beneficio_Neto"}.issubset(df.columns):
-            top = (
-                df.groupby("CEDI_Destino", as_index=False)
-                .agg(alertas=("CEDI_Destino", "count"), beneficio=("Beneficio_Neto", "sum"))
-                .sort_values("beneficio", ascending=False)
-            )
-            lines = ["Prioridad por CEDI destino:"]
-            for _, row in top.iterrows():
-                lines.append(f"- {row['CEDI_Destino']}: {int(row['alertas'])} alertas, {money(row['beneficio'])} de beneficio potencial.")
-            return "\n".join(lines)
-
-    if any(word in q for word in ["mover", "transferir", "transferencia", "inventario"]):
-        transfer_df = df[df["Accion_Recomendada"] == "TRANSFER_INVENTORY"] if "Accion_Recomendada" in df.columns else df
-        if transfer_df.empty:
-            return "No encontré recomendaciones de transferencia en el filtro actual. La recomendación sería revisar reabasto o monitorear."
-        row = transfer_df.sort_values("Beneficio_Neto", ascending=False).iloc[0]
-        return (
-            f"La transferencia más atractiva es para {row.get('SKU_ID', 'N/A')} en {row.get('CEDI_Destino', 'N/A')}. "
-            f"Se recomienda mover {int(row.get('Unidades_A_Transferir', 0))} unidades desde "
-            f"{row.get('CEDI_Origen_Recomendado', 'N/A')}. "
-            f"La pérdida esperada sin actuar es {money(row.get('Perdida_Esperada_Sin_Actuar', 0))}, "
-            f"el costo de transferencia es {money(row.get('Costo_Transferencia', 0))} y "
-            f"el beneficio neto estimado es {money(row.get('Beneficio_Neto', 0))}."
-        )
-
-    if any(word in q for word in ["modelo", "xgboost", "ml", "machine learning", "métrica", "metricas", "métricas"]):
-        if not model_metrics.empty:
-            best = model_metrics.sort_values("f1_risk", ascending=False).iloc[0] if "f1_risk" in model_metrics.columns else model_metrics.iloc[0]
-            return (
-                f"El modelo se compara contra baselines y modelos clásicos. "
-                f"El mejor F1 de riesgo en la tabla es {best.get('model', 'N/A')} con "
-                f"F1={best.get('f1_risk', 0):.3f}, recall={best.get('recall_risk', 0):.3f} y "
-                f"precision={best.get('precision_risk', 0):.3f}. "
-                f"La decisión de negocio no depende solo del modelo: después pasa por el motor costo-beneficio."
-            )
-        return "El modelo predictivo estima el riesgo de quiebre; luego el decision engine convierte ese riesgo en una acción de negocio."
-
-    if any(word in q for word in ["agente", "a2a", "llm", "gemini", "razonamiento"]):
-        return (
-            "La capa de agentes usa un patrón A2A-lite: RiskLens analiza riesgo, CostGuard revisa costo-beneficio, "
-            "PolicyCritic valida restricciones y ExecSupplyAI genera el brief ejecutivo. "
-            "El punto clave es que el LLM no inventa números: trabaja sobre artefactos estructurados generados por ML y reglas deterministas."
-        )
-
-    if any(word in q for word in ["arquitectura", "gcp", "cloud", "bigquery", "vertex"]):
-        return (
-            "La arquitectura local-first usa Excel, pandas, XGBoost, decision engine, agentes A2A-lite y Streamlit. "
-            "En GCP escalaría con Cloud Storage/PubSub/Dataflow para ingesta, BigQuery para datos, "
-            "Vertex AI para entrenamiento/despliegue/monitoring, y agentes desplegados como servicios interoperables vía A2A."
-        )
-
-    return (
-        "Puedo responder sobre: resumen ejecutivo, SKUs críticos, CEDIs críticos, transferencias recomendadas, "
-        "modelo XGBoost, agentes A2A-lite o arquitectura GCP. "
-        "Ejemplo: '¿qué SKU es más crítico?' o '¿por qué conviene mover inventario?'."
+if desabasto_count > 0:
+    recommendations.append(
+        "Priorizar reposición de productos en desabasto para evitar ventas perdidas."
     )
 
+if riesgo_count > 0:
+    recommendations.append(
+        "Monitorear productos en riesgo porque tienen poco margen de seguridad."
+    )
 
-def get_gemini_key() -> Optional[str]:
-    # Streamlit Cloud permite st.secrets; localmente usamos variables de entorno.
-    try:
-        if "GEMINI_API_KEY" in st.secrets:
-            return st.secrets["GEMINI_API_KEY"]
-        if "GOOGLE_API_KEY" in st.secrets:
-            return st.secrets["GOOGLE_API_KEY"]
-    except Exception:
-        pass
+if exceso_count > 0:
+    recommendations.append(
+        "Revisar productos con exceso para evitar capital inmovilizado o saturación de almacén."
+    )
 
-    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+if coverage_avg < 1:
+    recommendations.append(
+        "La cobertura promedio está por debajo de 1.0x; el inventario no alcanza para cubrir la demanda."
+    )
 
+if coverage_avg > 2.5:
+    recommendations.append(
+        "La cobertura promedio es alta; puede existir inventario de más en la selección actual."
+    )
 
-def answer_with_gemini(question: str, df: pd.DataFrame) -> Optional[str]:
-    """
-    Opción LLM: intenta responder con Gemini usando LangChain.
-    Si falla, regresa None y se usa el fallback local.
-    """
-    api_key = get_gemini_key()
-    if not api_key:
-        return None
+if not recommendations:
+    recommendations.append(
+        "El inventario se ve razonablemente equilibrado con los filtros actuales."
+    )
 
-    try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-    except Exception:
-        return None
-
-    context = build_context_summary(df)
-    sample_cols = [
-        "SKU_ID",
-        "CEDI_Destino",
-        "Riesgo_Probabilidad",
-        "Accion_Recomendada",
-        "CEDI_Origen_Recomendado",
-        "Unidades_A_Transferir",
-        "Beneficio_Neto",
-        "Razon",
-    ]
-    sample_cols = [c for c in sample_cols if c in df.columns]
-    sample = df[sample_cols].head(8).to_dict(orient="records")
-
-    prompt = f"""
-# Tu identidad
-Eres ExecSupplyAI, un agente de IA para Supply Chain con experiencia en inventarios, CEDIs y costo-beneficio.
-
-# Tu misión
-Responder preguntas ejecutivas sobre el prototipo Herdez Smart-Supply usando solo los datos proporcionados.
-
-# Límites
-- No inventes cifras.
-- Si el dato no está en el contexto, dilo claramente.
-- Sé breve y orientado a negocio.
-- No cambies la recomendación calculada por el motor determinista.
-
-# Contexto resumido
-{context}
-
-# Muestra de recomendaciones
-{sample}
-
-# Pregunta del usuario
-{question}
-"""
-
-    try:
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=api_key,
-            temperature=0.2,
-        )
-        response = llm.invoke(prompt)
-        return getattr(response, "content", str(response))
-    except Exception:
-        return None
-
-
-use_gemini = st.checkbox("Usar Gemini si hay API key disponible", value=False)
-
-if "chat_messages" not in st.session_state:
-    st.session_state.chat_messages = [
-        {
-            "role": "assistant",
-            "content": "Hola, soy ExecSupplyAI. Pregúntame por SKUs críticos, CEDIs críticos, transferencias, modelo ML, agentes A2A-lite o arquitectura GCP.",
-        }
-    ]
-
-for msg in st.session_state.chat_messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-user_question = st.chat_input("Ejemplo: ¿por qué conviene mover inventario?")
-
-if user_question:
-    st.session_state.chat_messages.append({"role": "user", "content": user_question})
-    with st.chat_message("user"):
-        st.markdown(user_question)
-
-    if use_gemini:
-        answer = answer_with_gemini(user_question, filtered)
-        if answer is None:
-            answer = answer_locally(user_question, filtered)
-    else:
-        answer = answer_locally(user_question, filtered)
-
-    st.session_state.chat_messages.append({"role": "assistant", "content": answer})
-    with st.chat_message("assistant"):
-        st.markdown(answer)
+for rec in recommendations:
+    st.write(f"✅ {rec}")
 
 
 # ============================================================
-# 14. PIE DE PÁGINA
+# SECCIÓN EDUCATIVA FINAL
+# ============================================================
+
+with st.expander("📚 Explicación simple de las métricas usadas"):
+    st.markdown(
+        """
+        **Inventario total**  
+        Es la cantidad de producto disponible.
+
+        **Demanda esperada**  
+        Es lo que se espera vender o necesitar.
+
+        **Brecha stock vs demanda**  
+        Se calcula así:  
+        `stock - demanda`
+
+        - Si da positivo, sobra inventario.
+        - Si da negativo, falta inventario.
+
+        **Cobertura de inventario**  
+        Se calcula así:  
+        `stock / demanda`
+
+        - 1.0x significa que el inventario apenas cubre la demanda.
+        - Menos de 1.0x significa posible desabasto.
+        - Mucho más de 2.5x puede indicar exceso.
+        """
+    )
+
+
+# ============================================================
+# DATOS CRUDOS
+# ============================================================
+
+with st.expander("📄 Ver datos originales"):
+    st.caption(
+        "Esta sección es solo para revisión técnica. "
+        "La parte importante para negocio está en los gráficos y alertas anteriores."
+    )
+
+    st.dataframe(
+        filtered_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+# ============================================================
+# PIE DE PÁGINA
 # ============================================================
 
 st.divider()
+
 st.caption(
-    "Herdez Smart-Supply | MVP local-first: EDA + XGBoost + Decision Engine + A2A-lite + Streamlit."
+    "Dashboard diseñado como guía visual para usuarios no técnicos. "
+    "La finalidad es facilitar decisiones rápidas sobre inventario, demanda, desabasto y exceso de stock."
 )
