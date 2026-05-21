@@ -1,0 +1,79 @@
+{
+  "risk_analyst": {
+    "name": "RiskLens",
+    "role": "Inventory Risk Analyst",
+    "description": "Analiza riesgo de quiebre usando alertas calculadas por ML y decision engine.",
+    "capabilities": [
+      "risk_interpretation",
+      "sku_cedi_prioritization",
+      "data_caveats"
+    ],
+    "input_artifacts": [
+      "decision_context"
+    ],
+    "output_artifacts": [
+      "risk_analysis"
+    ],
+    "deterministic": false,
+    "llm_enabled": true
+  },
+  "cost_analyst": {
+    "name": "CostGuard",
+    "role": "Logistics Cost Analyst",
+    "description": "Evalúa pérdida esperada, costo de transferencia y beneficio neto.",
+    "capabilities": [
+      "cost_benefit_explanation",
+      "financial_ranking"
+    ],
+    "input_artifacts": [
+      "decision_context",
+      "risk_analysis"
+    ],
+    "output_artifacts": [
+      "cost_analysis"
+    ],
+    "deterministic": false,
+    "llm_enabled": true
+  },
+  "policy_critic": {
+    "name": "PolicyCritic",
+    "role": "Policy Validator and Critic",
+    "description": "Critica recomendaciones contra reglas operativas y necesidad de revisión humana.",
+    "capabilities": [
+      "policy_validation",
+      "risk_critique",
+      "human_review_flag"
+    ],
+    "input_artifacts": [
+      "decision_context",
+      "risk_analysis",
+      "cost_analysis"
+    ],
+    "output_artifacts": [
+      "policy_critic"
+    ],
+    "deterministic": false,
+    "llm_enabled": true
+  },
+  "executive_communicator": {
+    "name": "ExecSupplyAI",
+    "role": "Executive Communicator",
+    "description": "Construye brief ejecutivo y trace técnico para entrevista.",
+    "capabilities": [
+      "executive_summary",
+      "technical_trace",
+      "interview_preparation"
+    ],
+    "input_artifacts": [
+      "decision_context",
+      "risk_analysis",
+      "cost_analysis",
+      "policy_critic"
+    ],
+    "output_artifacts": [
+      "executive_brief"
+    ],
+    "deterministic": false,
+    "llm_enabled": true
+  }
+}

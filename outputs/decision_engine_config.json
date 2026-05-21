@@ -1,0 +1,8 @@
+{
+  "safety_factor": 1.1,
+  "min_source_coverage_ratio": 1.2,
+  "high_risk_threshold": 0.7,
+  "medium_risk_threshold": 0.4,
+  "min_net_benefit": 0.0,
+  "max_alerts": 50
+}

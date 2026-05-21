@@ -1,0 +1,12 @@
+{
+  "mode": "fallback",
+  "architecture": "CrewAI/LangChain/Gemini over deterministic ML + decision engine",
+  "principle": "ML predicts risk; deterministic tools calculate cost-benefit; LLM agents reason, critique and explain.",
+  "input_recommendations": 50,
+  "alerts_sent_to_agent": 8,
+  "notes": [
+    "No se envía todo el dataset al LLM; solo contexto priorizado.",
+    "El LLM no calcula riesgo ni beneficio; interpreta salidas deterministas.",
+    "Este diseño permite fallback si falla el proveedor de LLM."
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "case": "Herdez Smart-Supply",
+  "principle": "XGBoost predice riesgo; el motor determinista calcula costo-beneficio; los agentes interpretan, critican y comunican.",
+  "summary": {
+    "alerts_count": 8,
+    "total_expected_loss": 0.0,
+    "total_transfer_cost": 0.0,
+    "total_net_benefit": 0.0
+  },
+  "alerts": [
+    {
+      "sku": "HZ-Salsa-Roja-200g",
+      "cedi_destino": "CEDI_Norte",
+      "cedi_origen": "N/D",
+      "risk_probability": 0.0,
+      "recommended_action": "N/D",
+      "units_to_transfer": 0.0,
+      "expected_loss": 0.0,
+      "transfer_cost": 0.0,
+      "net_benefit": 0.0,
+      "policy_status": "N/D"
+    },
+    {
+      "sku": "HZ-Salsa-Roja-200g",
+      "cedi_destino": "CEDI_Bajio",
+      "cedi_origen": "N/D",
+      "risk_probability": 0.0,
+      "recommended_action": "N/D",
+      "units_to_transfer": 0.0,
+      "expected_loss": 0.0,
+      "transfer_cost": 0.0,
+      "net_benefit": 0.0,
+      "policy_status": "N/D"
+    },
+    {
+      "sku": "HZ-Salsa-Roja-200g",
+      "cedi_destino": "CEDI_Occidente",
+      "cedi_origen": "N/D",
+      "risk_probability": 0.0,
+      "recommended_action": "N/D",
+      "units_to_transfer": 0.0,
+      "expected_loss": 0.0,
+      "transfer_cost": 0.0,
+      "net_benefit": 0.0,
+      "policy_status": "N/D"
+    },
+    {
+      "sku": "HZ-Salsa-Verde-200g",
+      "cedi_destino": "CEDI_Sur",
+      "cedi_origen": "N/D",
+      "risk_probability": 0.0,
+      "recommended_action": "N/D",
+      "units_to_transfer": 0.0,
+      "expected_loss": 0.0,
+      "transfer_cost": 0.0,
+      "net_benefit": 0.0,
+      "policy_status": "N/D"
+    },
+    {
+      "sku": "HZ-Atun-Agua-140g",
+      "cedi_destino": "CEDI_Occidente",
+      "cedi_origen": "N/D",
+      "risk_probability": 0.0,
+      "recommended_action": "N/D",
+      "units_to_transfer": 0.0,
+      "expected_loss": 0.0,
+      "transfer_cost": 0.0,
+      "net_benefit": 0.0,
+      "policy_status": "N/D"
+    },
+    {
+      "sku": "HZ-Salsa-Verde-200g",
+      "cedi_destino": "CEDI_Bajio",
+      "cedi_origen": "N/D",
+      "risk_probability": 0.0,
+      "recommended_action": "N/D",
+      "units_to_transfer": 0.0,
+      "expected_loss": 0.0,
+      "transfer_cost": 0.0,
+      "net_benefit": 0.0,
+      "policy_status": "N/D"
+    },
+    {
+      "sku": "HZ-Salsa-Roja-200g",
+      "cedi_destino": "CEDI_Occidente",
+      "cedi_origen": "N/D",
+      "risk_probability": 0.0,
+      "recommended_action": "N/D",
+      "units_to_transfer": 0.0,
+      "expected_loss": 0.0,
+      "transfer_cost": 0.0,
+      "net_benefit": 0.0,
+      "policy_status": "N/D"
+    },
+    {
+      "sku": "HZ-Salsa-Roja-200g",
+      "cedi_destino": "CEDI_Occidente",
+      "cedi_origen": "N/D",
+      "risk_probability": 0.0,
+      "recommended_action": "N/D",
+      "units_to_transfer": 0.0,
+      "expected_loss": 0.0,
+      "transfer_cost": 0.0,
+      "net_benefit": 0.0,
+      "policy_status": "N/D"
+    }
+  ]
+}

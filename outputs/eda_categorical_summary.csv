@@ -1,0 +1,15 @@
+variable,valor,conteo,porcentaje
+SKU_ID,HZ-Salsa-Verde-200g,240,0.2
+SKU_ID,HZ-Salsa-Roja-200g,240,0.2
+SKU_ID,HZ-Mole-Poblano-250g,240,0.2
+SKU_ID,HZ-Atun-Agua-140g,240,0.2
+SKU_ID,HZ-Champiñones-380g,240,0.2
+CEDI,CEDI_Norte,300,0.25
+CEDI,CEDI_Sur,300,0.25
+CEDI,CEDI_Occidente,300,0.25
+CEDI,CEDI_Bajio,300,0.25
+Promocion_Activa,0,1024,0.8533333333333334
+Promocion_Activa,1,176,0.14666666666666667
+Clima,Despejado,861,0.7175
+Clima,Lluvia,229,0.19083333333333333
+Clima,Tormenta,110,0.09166666666666666

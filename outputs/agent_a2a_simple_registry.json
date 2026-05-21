@@ -1,0 +1,44 @@
+[
+  {
+    "name": "RiskLens",
+    "role": "Inventory Risk Analyst",
+    "goal": "Interpret stockout risk patterns by SKU and CEDI using the decision engine outputs.",
+    "input_artifacts": [
+      "decision_context"
+    ],
+    "output_artifact": "risk_analysis"
+  },
+  {
+    "name": "CostGuard",
+    "role": "Logistics Cost Analyst",
+    "goal": "Explain whether the expected avoided loss justifies the logistics transfer cost.",
+    "input_artifacts": [
+      "decision_context",
+      "risk_analysis"
+    ],
+    "output_artifact": "cost_analysis"
+  },
+  {
+    "name": "PolicyCritic",
+    "role": "Policy Validator",
+    "goal": "Check operational caveats and decide if the recommendation needs human review.",
+    "input_artifacts": [
+      "decision_context",
+      "risk_analysis",
+      "cost_analysis"
+    ],
+    "output_artifact": "policy_review"
+  },
+  {
+    "name": "ExecSupplyAI",
+    "role": "Executive Communicator",
+    "goal": "Create a short executive brief and technical trace for the interview demo.",
+    "input_artifacts": [
+      "decision_context",
+      "risk_analysis",
+      "cost_analysis",
+      "policy_review"
+    ],
+    "output_artifact": "executive_brief"
+  }
+]
