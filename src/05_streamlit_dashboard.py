@@ -33,6 +33,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+# Ocultar el icono de GitHub y el menú de Streamlit
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+
 
 # ============================================================
 # 1. CONFIGURACIÓN GENERAL
