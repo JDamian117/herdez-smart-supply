@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -621,6 +622,91 @@ def render_agent_consensus(raw_artifacts: Any, live_decision: Optional[Dict[str,
         )
         if idx < len(steps) - 1:
             st.markdown('<div class="agent-arrow">↓</div>', unsafe_allow_html=True)
+
+
+
+def build_visible_agent_activity(question: str, live_decision: Optional[Dict[str, Any]], raw_artifacts: Any) -> List[Dict[str, str]]:
+    """Crea una bitácora visible de coordinación entre agentes para el chat.
+
+    Nota importante de diseño:
+    - Esto NO intenta mostrar el razonamiento interno privado del LLM.
+    - Muestra una traza pública/auditable: qué revisa cada agente, qué dato usa y qué artefacto entrega.
+    - Es ideal para demo porque enseña coordinación multiagente sin exponer chain-of-thought.
+    """
+    risk = pct(live_decision.get("Riesgo_Probabilidad")) if live_decision else "riesgo no seleccionado"
+    level = str(live_decision.get("Nivel_Riesgo")) if live_decision else "sin caso seleccionado"
+    action = str(live_decision.get("Accion_Recomendada")) if live_decision else "respuesta general"
+    benefit = money(live_decision.get("Beneficio_Neto", 0)) if live_decision else "no aplica"
+    sku = str(live_decision.get("SKU_ID")) if live_decision else "SKU no seleccionado"
+    cedi = str(live_decision.get("CEDI_Destino")) if live_decision else "CEDI no seleccionado"
+
+    return [
+        {
+            "agent": "Router",
+            "status": "Recibe la pregunta",
+            "visible_work": f"Clasifica la intención del usuario: '{question[:90]}'.",
+            "artifact": "Tipo de consulta: histórico, riesgo, costos, agentes, arquitectura o caso vivo.",
+        },
+        {
+            "agent": "RiskLens",
+            "status": "Consulta riesgo",
+            "visible_work": f"Revisa el caso {sku} en {cedi} y recupera la probabilidad de quiebre.",
+            "artifact": f"Artefacto de riesgo: {risk}, nivel {level}.",
+        },
+        {
+            "agent": "CostGuard",
+            "status": "Valida economía",
+            "visible_work": "Compara pérdida esperada, costo de transferencia y beneficio neto.",
+            "artifact": f"Artefacto financiero: recomendación {action}, beneficio neto {benefit}.",
+        },
+        {
+            "agent": "PolicyCritic",
+            "status": "Revisa restricciones",
+            "visible_work": "Verifica que la respuesta no prometa acciones fuera de los datos y que no invente números.",
+            "artifact": "Artefacto de control: usar solo datos del modelo, motor de decisión y archivos generados.",
+        },
+        {
+            "agent": "ExecSupplyAI",
+            "status": "Redacta respuesta",
+            "visible_work": "Convierte la salida técnica en una explicación ejecutiva para negocio.",
+            "artifact": "Respuesta final: clara, accionable y en lenguaje no técnico.",
+        },
+    ]
+
+
+def render_live_agent_activity(question: str, live_decision: Optional[Dict[str, Any]], raw_artifacts: Any) -> None:
+    """Muestra una simulación auditable de coordinación mientras se construye la respuesta del chat."""
+    st.markdown("#### 🔄 Coordinación visible de agentes")
+    st.caption(
+        "Esta bitácora muestra pasos públicos y auditables del sistema. "
+        "No expone pensamiento interno oculto; muestra qué datos revisa cada agente y qué artefacto entrega."
+    )
+
+    progress = st.progress(0)
+    feed = st.container()
+    steps = build_visible_agent_activity(question, live_decision, raw_artifacts)
+
+    completed: List[Dict[str, str]] = []
+    for i, step in enumerate(steps, start=1):
+        completed.append(step)
+        progress.progress(i / len(steps))
+        with feed:
+            st.markdown(
+                f"""
+                <div class="agent-step">
+                  <div class="agent-step-header">
+                    <span class="agent-badge">{step['agent']}</span>
+                    {step['status']}
+                  </div>
+                  <div class="helper-text"><b>Trabajo visible:</b> {step['visible_work']}</div>
+                  <div class="helper-text"><b>Artefacto entregado:</b> {step['artifact']}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        time.sleep(0.25)
+
+    st.success("Consenso listo: el chat usará estos artefactos para responder.")
 
 # =============================================================================
 # 6. CHAT / AGENTE EXPLICADOR
@@ -1230,6 +1316,7 @@ elif page.startswith("5"):
     )
 
     use_gemini = st.toggle("Usar Gemini si hay API key configurada", value=False)
+    show_live_coordination = st.toggle("Mostrar coordinación de agentes mientras responde", value=True)
     examples = [
         "¿Por qué solo hay 50 alertas priorizadas?",
         "¿Qué significa beneficio neto?",
@@ -1263,13 +1350,19 @@ elif page.startswith("5"):
 
         live_decision = st.session_state.get("live_decision")
         context = build_context_summary(recommendations_period, features_period, scored_period, model_metrics, live_decision, agent_brief, agent_artifacts)
-        answer = gemini_agent_answer(prompt, context) if use_gemini else None
-        if not answer:
-            answer = local_agent_answer(prompt, context, live_decision, agent_artifacts)
+
+        with st.chat_message("assistant"):
+            if show_live_coordination:
+                render_live_agent_activity(prompt, live_decision, agent_artifacts)
+                st.divider()
+
+            answer = gemini_agent_answer(prompt, context) if use_gemini else None
+            if not answer:
+                answer = local_agent_answer(prompt, context, live_decision, agent_artifacts)
+
+            st.markdown(answer)
 
         st.session_state["chat_history"].append({"role": "assistant", "content": answer})
-        with st.chat_message("assistant"):
-            st.markdown(answer)
 
 
 else:
