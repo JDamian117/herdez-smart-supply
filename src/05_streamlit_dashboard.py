@@ -1,24 +1,22 @@
-# ============================================================
-# 05_streamlit_dashboard.py
-# Herdez Smart-Supply | Dashboard ejecutivo premium
-# ------------------------------------------------------------
-# Objetivo del archivo:
-#   Convertir los artefactos generados por el pipeline 01-04 en
-#   una experiencia ejecutiva, guiada y entendible para usuarios
-#   sin conocimientos técnicos ni de Supply Chain.
-#
-# Flujo del sistema:
-#   01 EDA/Features  -> outputs/herdez_features_dataset.csv
-#   02 Modelos ML    -> outputs/model_comparison_metrics.csv
-#   03 Decision Eng. -> outputs/decision_recommendations.csv
-#   04 Agentes       -> outputs/agent_executive_brief_a2a_simple.md
-#   05 Dashboard     -> este archivo, solo visualiza y explica
-#
-# Cómo correr:
-#   python -m streamlit run app.py
-#   o
-#   python -m streamlit run src/05_streamlit_dashboard.py
-# ============================================================
+"""
+05_streamlit_dashboard.py
+Herdez Smart-Supply | Dashboard operacional con predicción en vivo y chat
+
+Objetivo del archivo
+--------------------
+Convertir el prototipo en un producto demostrable:
+1) Mostrar el estado ejecutivo del sistema.
+2) Permitir seleccionar un caso real del dataset.
+3) Ejecutar predicción en vivo con el modelo XGBoost guardado.
+4) Calcular una recomendación costo-beneficio con reglas deterministas.
+5) Ofrecer un chat explicativo para usuarios de negocio.
+
+Principio de arquitectura
+-------------------------
+- El modelo ML predice riesgo de quiebre.
+- El motor determinista calcula la recomendación y el impacto económico.
+- El chat/agente explica la decisión, pero no inventa números críticos.
+"""
 
 from __future__ import annotations
 
@@ -27,25 +25,16 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import joblib
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
-# Ocultar el icono de GitHub y el menú de Streamlit
-st.markdown("""
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    </style>
-    """, unsafe_allow_html=True)
 
-
-# ============================================================
+# =============================================================================
 # 1. CONFIGURACIÓN GENERAL
-# ============================================================
+# =============================================================================
 
 st.set_page_config(
     page_title="Herdez Smart-Supply",
@@ -55,296 +44,149 @@ st.set_page_config(
 )
 
 
-# ============================================================
-# 2. UTILIDADES DE RUTA Y CARGA DE DATOS
-# ============================================================
-
+# =============================================================================
+# 2. RUTAS ROBUSTAS
+# =============================================================================
 
 def find_project_root() -> Path:
-    """Encuentra la raíz del proyecto aunque Streamlit se ejecute desde app.py o desde src/.
-
-    Buscamos una carpeta que contenga app.py, outputs/ o requirements.txt.
-    Esto evita errores típicos de rutas relativas en Streamlit Cloud y Windows.
-    """
-    candidates = [Path.cwd()]
-    if "__file__" in globals():
-        current = Path(__file__).resolve()
-        candidates.extend([current.parent, current.parent.parent])
-
-    for base in candidates:
-        if (base / "outputs").exists() or (base / "app.py").exists() or (base / "requirements.txt").exists():
-            return base
-
+    """Busca la raíz del proyecto aunque la app corra desde app.py o desde src/."""
+    current = Path(__file__).resolve()
+    candidates = [
+        current.parent,
+        current.parent.parent,
+        Path.cwd(),
+        Path.cwd().parent,
+    ]
+    for candidate in candidates:
+        if (candidate / "outputs").exists() and (candidate / "src").exists():
+            return candidate
     return Path.cwd()
 
 
-ROOT_DIR = find_project_root()
-OUTPUTS_DIR = ROOT_DIR / "outputs"
-MODELS_DIR = ROOT_DIR / "models"
-DATA_DIR = ROOT_DIR / "data"
+PROJECT_ROOT = find_project_root()
+OUTPUTS_DIR = PROJECT_ROOT / "outputs"
+MODELS_DIR = PROJECT_ROOT / "models"
+DATA_DIR = PROJECT_ROOT / "data"
 
 
-@st.cache_data(show_spinner=False)
-def load_csv(relative_path: str) -> pd.DataFrame:
-    """Carga CSV desde la raíz del proyecto de forma segura."""
-    path = ROOT_DIR / relative_path
-    if not path.exists():
-        return pd.DataFrame()
-    try:
-        return pd.read_csv(path)
-    except Exception as exc:
-        st.warning(f"No pude leer {relative_path}: {exc}")
-        return pd.DataFrame()
-
-
-@st.cache_data(show_spinner=False)
-def load_json(relative_path: str) -> Any:
-    """Carga JSON desde la raíz del proyecto de forma segura."""
-    path = ROOT_DIR / relative_path
-    if not path.exists():
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as exc:
-        st.warning(f"No pude leer {relative_path}: {exc}")
-        return None
-
-
-@st.cache_data(show_spinner=False)
-def load_text(relative_path: str) -> str:
-    """Carga texto/markdown desde la raíz del proyecto."""
-    path = ROOT_DIR / relative_path
-    if not path.exists():
-        return ""
-    try:
-        return path.read_text(encoding="utf-8")
-    except Exception:
-        return ""
-
-
-# Carga principal de artefactos del pipeline.
-decisions = load_csv("outputs/decision_recommendations.csv")
-alerts = load_csv("outputs/scored_stockout_alerts.csv")
-model_metrics = load_csv("outputs/model_comparison_metrics.csv")
-risk_by_sku = load_csv("outputs/risk_by_sku.csv")
-risk_by_cedi = load_csv("outputs/risk_by_cedi.csv")
-risk_by_sku_cedi = load_csv("outputs/risk_by_sku_cedi.csv")
-time_series = load_csv("outputs/time_series_daily_summary.csv")
-features = load_csv("outputs/herdez_features_dataset.csv")
-agent_registry = load_json("outputs/agent_a2a_simple_registry.json")
-agent_artifacts = load_json("outputs/agent_a2a_simple_artifacts.json") or {}
-agent_trace = load_json("outputs/agent_a2a_simple_trace.json") or {}
-agent_brief = load_text("outputs/agent_executive_brief_a2a_simple.md")
-
-
-# ============================================================
-# 3. CSS PREMIUM: CONTRASTE, TARJETAS Y SISTEMA VISUAL
-# ============================================================
-
+# =============================================================================
+# 3. CSS / SISTEMA VISUAL PREMIUM
+# =============================================================================
 
 def inject_css() -> None:
-    """Inyecta CSS personalizado.
-
-    Principios aplicados:
-    - Contraste suficiente en modo claro/oscuro.
-    - Cards con border-radius 12px y sombra suave.
-    - Jerarquía visual para reducir carga cognitiva.
-    - Paleta sobria: azul apagado, carbón, verde operativo y rojo alerta.
-    """
+    """Inyecta estilos para cards, contraste, sombras y accesibilidad visual."""
     st.markdown(
         """
         <style>
         :root {
-            --bg-soft: rgba(248, 250, 252, 0.92);
-            --card-bg: rgba(255, 255, 255, 0.94);
-            --card-border: rgba(15, 23, 42, 0.10);
-            --text-main: #0f172a;
+            --card-bg: rgba(255, 255, 255, 0.78);
+            --card-border: rgba(20, 36, 58, 0.10);
             --text-muted: #64748b;
-            --muted-blue: #3b6f9e;
-            --muted-blue-2: #6b8faf;
-            --charcoal: #1f2937;
-            --danger: #b91c1c;
-            --danger-soft: #fee2e2;
-            --success: #15803d;
-            --success-soft: #dcfce7;
-            --warning: #b45309;
-            --warning-soft: #fef3c7;
-            --info-soft: #e0f2fe;
-            --shadow-soft: 0 12px 28px rgba(15, 23, 42, 0.08);
+            --accent-blue: #2563eb;
+            --accent-green: #16a34a;
+            --accent-red: #dc2626;
+            --accent-amber: #d97706;
+            --charcoal: #111827;
+            --soft-shadow: 0 14px 35px rgba(15, 23, 42, 0.08);
         }
 
         @media (prefers-color-scheme: dark) {
             :root {
-                --bg-soft: rgba(15, 23, 42, 0.72);
-                --card-bg: rgba(30, 41, 59, 0.92);
-                --card-border: rgba(226, 232, 240, 0.12);
-                --text-main: #f8fafc;
+                --card-bg: rgba(17, 24, 39, 0.72);
+                --card-border: rgba(255, 255, 255, 0.12);
                 --text-muted: #cbd5e1;
-                --danger-soft: rgba(127, 29, 29, 0.42);
-                --success-soft: rgba(20, 83, 45, 0.42);
-                --warning-soft: rgba(120, 53, 15, 0.42);
-                --info-soft: rgba(12, 74, 110, 0.42);
-                --shadow-soft: 0 12px 28px rgba(0, 0, 0, 0.28);
+                --charcoal: #f8fafc;
+                --soft-shadow: 0 14px 35px rgba(0, 0, 0, 0.28);
             }
         }
 
-        .block-container {
-            padding-top: 1.2rem;
-            padding-bottom: 4rem;
-            max-width: 1400px;
+        .main .block-container {
+            padding-top: 1.6rem;
+            padding-bottom: 3rem;
+            max-width: 1380px;
         }
 
         .hero {
-            background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 48%, #3b6f9e 100%);
-            color: white;
-            border-radius: 20px;
-            padding: 28px 30px;
-            margin-bottom: 24px;
-            box-shadow: 0 18px 42px rgba(15, 23, 42, 0.24);
-        }
-
-        .hero h1 {
-            font-size: 2.35rem;
-            margin: 0 0 8px 0;
-            letter-spacing: -0.03em;
-        }
-
-        .hero p {
-            color: rgba(255,255,255,0.86);
-            font-size: 1.03rem;
-            max-width: 980px;
-            margin: 0;
-            line-height: 1.55;
-        }
-
-        .section-title {
-            margin-top: 18px;
-            margin-bottom: 8px;
-        }
-
-        .section-title h2 {
-            font-size: 1.48rem;
-            margin: 0;
-            color: var(--text-main);
-            letter-spacing: -0.02em;
-        }
-
-        .section-title p {
-            margin: 6px 0 0 0;
-            color: var(--text-muted);
-            font-size: 0.98rem;
-            line-height: 1.45;
-        }
-
-        .premium-card {
-            background: var(--card-bg);
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(22, 163, 74, 0.10));
             border: 1px solid var(--card-border);
-            border-radius: 12px;
-            padding: 18px 18px;
-            box-shadow: var(--shadow-soft);
-            margin-bottom: 16px;
+            border-radius: 18px;
+            padding: 1.4rem 1.6rem;
+            box-shadow: var(--soft-shadow);
+            margin-bottom: 1rem;
         }
 
-        .metric-card {
-            background: var(--card-bg);
-            border: 1px solid var(--card-border);
-            border-radius: 12px;
-            padding: 18px 16px;
-            box-shadow: var(--shadow-soft);
-            min-height: 132px;
-        }
-
-        .metric-label {
-            color: var(--text-muted);
-            font-size: 0.84rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.07em;
-            margin-bottom: 8px;
-        }
-
-        .metric-value {
-            color: var(--text-main);
-            font-size: 1.75rem;
+        .hero-title {
+            font-size: 2.1rem;
             font-weight: 800;
             letter-spacing: -0.04em;
-            margin-bottom: 6px;
+            margin-bottom: 0.2rem;
+            color: var(--charcoal);
         }
 
-        .metric-help {
+        .hero-subtitle {
+            font-size: 1rem;
             color: var(--text-muted);
-            font-size: 0.86rem;
-            line-height: 1.35;
+            line-height: 1.55;
+            max-width: 1050px;
         }
 
-        .accent-danger { border-left: 5px solid var(--danger); }
-        .accent-success { border-left: 5px solid var(--success); }
-        .accent-info { border-left: 5px solid var(--muted-blue); }
-        .accent-warning { border-left: 5px solid var(--warning); }
+        .section-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 1.05rem 1.15rem;
+            box-shadow: var(--soft-shadow);
+            margin-bottom: 1rem;
+        }
+
+        .mini-title {
+            font-size: 1.05rem;
+            font-weight: 750;
+            margin-bottom: 0.25rem;
+            color: var(--charcoal);
+        }
+
+        .helper-text {
+            font-size: 0.92rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
 
         .pill {
             display: inline-block;
-            padding: 5px 10px;
+            padding: 0.22rem 0.62rem;
             border-radius: 999px;
             font-size: 0.78rem;
             font-weight: 700;
-            margin-right: 6px;
-            margin-bottom: 6px;
+            margin-right: 0.35rem;
         }
+        .pill-blue { background: rgba(37,99,235,0.14); color: #2563eb; }
+        .pill-green { background: rgba(22,163,74,0.14); color: #16a34a; }
+        .pill-red { background: rgba(220,38,38,0.14); color: #dc2626; }
+        .pill-amber { background: rgba(217,119,6,0.14); color: #d97706; }
 
-        .pill-danger { background: var(--danger-soft); color: var(--danger); }
-        .pill-success { background: var(--success-soft); color: var(--success); }
-        .pill-info { background: var(--info-soft); color: var(--muted-blue); }
-        .pill-warning { background: var(--warning-soft); color: var(--warning); }
-
-        .explain-box {
-            background: var(--bg-soft);
-            border: 1px solid var(--card-border);
+        .decision-box {
+            border-left: 5px solid #2563eb;
+            padding: 0.95rem 1rem;
             border-radius: 12px;
-            padding: 14px 16px;
-            color: var(--text-main);
-            margin-top: 10px;
-            margin-bottom: 12px;
+            background: rgba(37, 99, 235, 0.08);
+            margin-top: 0.6rem;
         }
 
-        .explain-box strong {
-            color: var(--text-main);
-        }
-
-        .analogy {
-            border-left: 4px solid var(--muted-blue);
-            background: var(--info-soft);
-            padding: 12px 14px;
-            border-radius: 10px;
-            color: var(--text-main);
-            margin: 10px 0;
-        }
-
-        div[data-testid="stDataFrame"] {
-            border-radius: 12px;
-            overflow: hidden;
-        }
+        .risk-high { border-left-color: #dc2626; background: rgba(220, 38, 38, 0.08); }
+        .risk-medium { border-left-color: #d97706; background: rgba(217, 119, 6, 0.10); }
+        .risk-low { border-left-color: #16a34a; background: rgba(22, 163, 74, 0.08); }
 
         div[data-testid="stMetric"] {
             background: var(--card-bg);
             border: 1px solid var(--card-border);
-            padding: 1rem;
-            border-radius: 12px;
-            box-shadow: var(--shadow-soft);
+            border-radius: 14px;
+            padding: 0.9rem 1rem;
+            box-shadow: var(--soft-shadow);
         }
 
-        .small-note {
-            font-size: 0.86rem;
-            color: var(--text-muted);
-            line-height: 1.45;
-        }
-
-        .footer-note {
-            color: var(--text-muted);
-            font-size: 0.86rem;
-            text-align: center;
-            margin-top: 30px;
+        .stChatMessage {
+            border-radius: 14px;
         }
         </style>
         """,
@@ -355,934 +197,804 @@ def inject_css() -> None:
 inject_css()
 
 
-# ============================================================
-# 4. FUNCIONES DE FORMATO Y TARJETAS
-# ============================================================
+# =============================================================================
+# 4. FUNCIONES AUXILIARES DE DATOS
+# =============================================================================
+
+@st.cache_data(show_spinner=False)
+def load_csv(filename: str) -> pd.DataFrame:
+    path = OUTPUTS_DIR / filename
+    if not path.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(path)
+    if "Fecha" in df.columns:
+        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
+    return df
+
+
+@st.cache_data(show_spinner=False)
+def load_json(filename: str) -> Any:
+    path = OUTPUTS_DIR / filename
+    if not path.exists():
+        return {} if filename.endswith(".json") else None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+@st.cache_data(show_spinner=False)
+def load_markdown(filename: str) -> str:
+    path = OUTPUTS_DIR / filename
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+@st.cache_resource(show_spinner=False)
+def load_model_artifact() -> Optional[Dict[str, Any]]:
+    path = MODELS_DIR / "best_stockout_model.joblib"
+    if not path.exists():
+        return None
+    try:
+        return joblib.load(path)
+    except Exception as exc:
+        st.warning(f"No pude cargar el modelo guardado: {exc}")
+        return None
 
 
 def money(value: Any) -> str:
-    """Formato moneda MXN robusto."""
     try:
-        if pd.isna(value):
-            return "$0"
         return f"${float(value):,.0f} MXN"
     except Exception:
         return "$0 MXN"
 
 
-
-def pct(value: Any, decimals: int = 1) -> str:
-    """Formato porcentaje robusto.
-
-    Si el valor viene como 0.28, se muestra 28.0%.
-    Si viene como 28, se muestra 28.0% también.
-    """
+def pct(value: Any) -> str:
     try:
-        v = float(value)
-        if abs(v) <= 1:
-            v *= 100
-        return f"{v:.{decimals}f}%"
+        return f"{float(value) * 100:.1f}%"
     except Exception:
         return "0.0%"
 
 
-
-def number(value: Any) -> str:
-    try:
-        return f"{float(value):,.0f}"
-    except Exception:
-        return "0"
+def safe_col(df: pd.DataFrame, col: str, default: Any = 0) -> pd.Series:
+    if col in df.columns:
+        return df[col]
+    return pd.Series([default] * len(df), index=df.index)
 
 
+# =============================================================================
+# 5. LÓGICA DE MODELO Y DECISIÓN EN VIVO
+# =============================================================================
 
-def section(title: str, subtitle: str) -> None:
-    st.markdown(
-        f"""
-        <div class="section-title">
-            <h2>{title}</h2>
-            <p>{subtitle}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+class DecisionConfig:
+    """Parámetros de negocio editables sin reentrenar el modelo."""
+    safety_factor = 1.10
+    min_source_coverage_ratio = 1.20
+    high_risk_threshold = 0.70
+    medium_risk_threshold = 0.40
+    min_net_benefit = 0.0
+
+
+def classify_risk(prob: float) -> str:
+    if prob >= DecisionConfig.high_risk_threshold:
+        return "Alto"
+    if prob >= DecisionConfig.medium_risk_threshold:
+        return "Medio"
+    return "Bajo"
+
+
+def normalize_live_row(row: pd.Series) -> pd.Series:
+    """Recalcula features dependientes cuando el usuario modifica variables."""
+    row = row.copy()
+    ventas = float(row.get("Ventas_Unidades", 0) or 0)
+    ventas_media_7d = float(row.get("Ventas_Media_7d", ventas) or ventas or 1)
+    stock = float(row.get("Stock_Actual", 0) or 0)
+    lead = float(row.get("Lead_Time_Dias", 1) or 1)
+
+    # Si el usuario modifica ventas/lead/stock, estas variables deben actualizarse.
+    row["Ventas_Media_3d"] = float(row.get("Ventas_Media_3d", ventas_media_7d) or ventas_media_7d)
+    row["Ventas_Media_7d"] = ventas_media_7d
+    row["Ventas_Max_7d"] = max(float(row.get("Ventas_Max_7d", ventas_media_7d) or ventas_media_7d), ventas_media_7d)
+    row["Demanda_Estimada_LT"] = ventas_media_7d * lead
+    row["Dias_Cobertura"] = stock / max(ventas_media_7d, 1)
+    row["Gap_Estimado_LT"] = stock - row["Demanda_Estimada_LT"]
+    row["Ratio_Cobertura_LT"] = stock / max(row["Demanda_Estimada_LT"], 1)
+    row["Promocion_Activa_Num"] = int(row.get("Promocion_Activa_Num", row.get("Promocion_Activa", 0)) or 0)
+    return row
+
+
+def predict_live_risk(row: pd.Series, model_artifact: Optional[Dict[str, Any]]) -> Tuple[float, str]:
+    """Predice riesgo con XGBoost. Si no hay modelo, usa baseline de cobertura."""
+    row = normalize_live_row(row)
+
+    if model_artifact is not None:
+        try:
+            feature_columns = model_artifact["feature_columns"]
+            pipeline = model_artifact["pipeline"]
+            one = pd.DataFrame([row.to_dict()])
+            for col in feature_columns:
+                if col not in one.columns:
+                    one[col] = np.nan
+            prob = float(pipeline.predict_proba(one[feature_columns])[:, 1][0])
+            return prob, "XGBoost guardado"
+        except Exception as exc:
+            st.warning(f"No se pudo usar XGBoost para este caso. Uso baseline. Detalle: {exc}")
+
+    # Baseline si no hay modelo: cuanto menor la cobertura, mayor el riesgo.
+    ratio = float(row.get("Ratio_Cobertura_LT", 0) or 0)
+    prob = float(np.clip(1.0 - ratio, 0.0, 1.0))
+    return prob, "Baseline cobertura"
+
+
+def source_surplus(source_row: pd.Series) -> int:
+    ventas = float(source_row.get("Ventas_Media_7d", source_row.get("Ventas_Unidades", 0)) or 0)
+    lead = float(source_row.get("Lead_Time_Dias", 1) or 1)
+    stock = float(source_row.get("Stock_Actual", 0) or 0)
+    required = ventas * lead * DecisionConfig.safety_factor * DecisionConfig.min_source_coverage_ratio
+    return int(max(0, np.floor(stock - required)))
+
+
+def recommend_live_case(scored_df: pd.DataFrame, live_row: pd.Series, risk_prob: float) -> Dict[str, Any]:
+    """Calcula recomendación determinista para el caso seleccionado/simulado."""
+    row = normalize_live_row(live_row)
+    row["Riesgo_Probabilidad"] = risk_prob
+    risk_level = classify_risk(risk_prob)
+
+    demand_safe = float(row["Ventas_Media_7d"] * row["Lead_Time_Dias"] * DecisionConfig.safety_factor)
+    units_needed = int(np.ceil(max(0, demand_safe - float(row["Stock_Actual"]))))
+    expected_loss = float(risk_prob * float(row["Costo_Quiebre_Stock_Diario"]) * float(row["Lead_Time_Dias"]))
+
+    candidates = scored_df[
+        (pd.to_datetime(scored_df["Fecha"]).dt.date == pd.to_datetime(row["Fecha"]).date())
+        & (scored_df["SKU_ID"] == row["SKU_ID"])
+        & (scored_df["CEDI"] != row["CEDI"])
+    ].copy()
+
+    scenarios: List[Dict[str, Any]] = []
+    for _, source in candidates.iterrows():
+        surplus = source_surplus(source)
+        units = int(min(units_needed, surplus))
+        if units <= 0:
+            continue
+        coverage_ratio = min(units / max(units_needed, 1), 1.0)
+        avoided_loss = expected_loss * coverage_ratio
+        transfer_cost = float(units * float(row["Costo_Transferencia_Unidad"]))
+        net = avoided_loss - transfer_cost
+        scenarios.append(
+            {
+                "CEDI_Origen": source["CEDI"],
+                "Stock_Origen": float(source["Stock_Actual"]),
+                "Excedente_Origen": surplus,
+                "Unidades_A_Transferir": units,
+                "Cobertura_Faltante": coverage_ratio,
+                "Costo_Transferencia": transfer_cost,
+                "Perdida_Evitada": avoided_loss,
+                "Beneficio_Neto": net,
+            }
+        )
+
+    best = max(scenarios, key=lambda s: (s["Beneficio_Neto"], s["Perdida_Evitada"]), default=None)
+
+    if units_needed <= 0:
+        action = "MONITOR"
+        reason = "El inventario actual cubre la demanda estimada durante el lead time."
+    elif risk_prob < DecisionConfig.medium_risk_threshold:
+        action = "MONITOR"
+        reason = "El riesgo estimado aún no justifica una transferencia inmediata."
+    elif best and best["Beneficio_Neto"] > DecisionConfig.min_net_benefit:
+        action = "TRANSFER_INVENTORY"
+        reason = "Existe un CEDI origen viable y la pérdida evitada supera el costo logístico."
+    elif best:
+        action = "WAIT_REPLENISHMENT"
+        reason = "Hay inventario transferible, pero el beneficio neto no justifica el costo logístico."
+    else:
+        action = "EXPEDITE_REPLENISHMENT_OR_REVIEW"
+        reason = "No se encontró un CEDI origen con excedente suficiente sin ponerlo en riesgo."
+
+    if best:
+        transfer_cost = best["Costo_Transferencia"]
+        avoided_loss = best["Perdida_Evitada"]
+        net_benefit = best["Beneficio_Neto"]
+        origin = best["CEDI_Origen"]
+        units = best["Unidades_A_Transferir"]
+    else:
+        transfer_cost = 0.0
+        avoided_loss = 0.0
+        net_benefit = 0.0
+        origin = "No disponible"
+        units = 0
+
+    explanation = (
+        f"El SKU {row['SKU_ID']} en {row['CEDI']} tiene riesgo {risk_level.lower()} "
+        f"de quiebre ({pct(risk_prob)}). La demanda segura estimada durante el lead time es "
+        f"de {demand_safe:,.0f} unidades y se requieren {units_needed:,} unidades adicionales. "
+        f"Recomendación: {action}. {reason}"
     )
 
-
-
-def metric_card(label: str, value: str, help_text: str, accent: str = "info") -> None:
-    st.markdown(
-        f"""
-        <div class="metric-card accent-{accent}">
-            <div class="metric-label">{label}</div>
-            <div class="metric-value">{value}</div>
-            <div class="metric-help">{help_text}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-
-def explanation(title: str, body: str, kind: str = "info") -> None:
-    pill_class = {
-        "danger": "pill-danger",
-        "success": "pill-success",
-        "warning": "pill-warning",
-        "info": "pill-info",
-    }.get(kind, "pill-info")
-    st.markdown(
-        f"""
-        <div class="explain-box">
-            <span class="pill {pill_class}">{title}</span><br>
-            {body}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-
-def analogy(text: str) -> None:
-    st.markdown(f"<div class='analogy'>💡 <strong>Analogía:</strong> {text}</div>", unsafe_allow_html=True)
-
-
-
-def clean_action(action: Any) -> str:
-    mapping = {
-        "TRANSFER_INVENTORY": "Transferir inventario",
-        "EXPEDITE_REPLENISHMENT_OR_REVIEW": "Reabasto urgente / revisión",
-        "MONITOR": "Monitorear",
-        "WAIT": "Esperar reabasto",
-        "NO_ACTION": "Sin acción",
+    return {
+        "Fecha": str(pd.to_datetime(row["Fecha"]).date()),
+        "SKU_ID": row["SKU_ID"],
+        "CEDI_Destino": row["CEDI"],
+        "Riesgo_Probabilidad": risk_prob,
+        "Nivel_Riesgo": risk_level,
+        "Stock_Actual": float(row["Stock_Actual"]),
+        "Ventas_Media_7d": float(row["Ventas_Media_7d"]),
+        "Lead_Time_Dias": int(row["Lead_Time_Dias"]),
+        "Demanda_Estimada_LT_Segura": demand_safe,
+        "Unidades_Necesarias": units_needed,
+        "Perdida_Esperada_Sin_Actuar": expected_loss,
+        "Accion_Recomendada": action,
+        "CEDI_Origen_Recomendado": origin,
+        "Unidades_A_Transferir": units,
+        "Costo_Transferencia": transfer_cost,
+        "Perdida_Evitada": avoided_loss,
+        "Beneficio_Neto": net_benefit,
+        "Razon": reason,
+        "Explicacion_Ejecutiva": explanation,
+        "Escenarios": scenarios,
     }
-    return mapping.get(str(action), str(action))
 
 
-# ============================================================
-# 5. VALIDACIÓN DE ARTEFACTOS
-# ============================================================
+@st.cache_data(show_spinner=False)
+def score_dataset_cached(features_df: pd.DataFrame) -> pd.DataFrame:
+    """Genera riesgos para todo el dataset si no existe scored_stockout_alerts.csv."""
+    artifact = load_model_artifact()
+    if artifact is None or features_df.empty:
+        return features_df.copy()
+    scored = features_df.copy()
+    feature_columns = artifact["feature_columns"]
+    pipeline = artifact["pipeline"]
+    for col in feature_columns:
+        if col not in scored.columns:
+            scored[col] = np.nan
+    scored["Riesgo_Probabilidad"] = pipeline.predict_proba(scored[feature_columns])[:, 1]
+    scored["Alerta_Riesgo"] = (scored["Riesgo_Probabilidad"] >= float(artifact.get("threshold", 0.5))).astype(int)
+    return scored
 
 
-required = {
-    "outputs/decision_recommendations.csv": not decisions.empty,
-    "outputs/scored_stockout_alerts.csv": not alerts.empty,
-    "outputs/model_comparison_metrics.csv": not model_metrics.empty,
-}
+# =============================================================================
+# 6. CHAT / AGENTE EXPLICADOR
+# =============================================================================
 
-if not all(required.values()):
-    st.markdown(
-        """
-        <div class="hero">
-            <h1>📦 Herdez Smart-Supply</h1>
-            <p>El dashboard está listo, pero faltan artefactos generados por el pipeline.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+def get_secret(name: str) -> Optional[str]:
+    """Lee secretos desde Streamlit Cloud o variables de entorno."""
+    try:
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:
+        pass
+    return os.environ.get(name)
+
+
+def build_context_summary(
+    recommendations: pd.DataFrame,
+    model_metrics: pd.DataFrame,
+    live_decision: Optional[Dict[str, Any]],
+    agent_brief: str,
+) -> str:
+    """Resume el contexto real disponible para el chat."""
+    lines = []
+    if not recommendations.empty:
+        total_loss = recommendations["Perdida_Esperada_Sin_Actuar"].sum()
+        total_net = recommendations["Beneficio_Neto"].sum()
+        top = recommendations.sort_values("Beneficio_Neto", ascending=False).head(3)
+        lines.append(f"Alertas priorizadas: {len(recommendations)}")
+        lines.append(f"Pérdida esperada agregada: {money(total_loss)}")
+        lines.append(f"Beneficio neto potencial agregado: {money(total_net)}")
+        lines.append("Top recomendaciones:")
+        for _, r in top.iterrows():
+            lines.append(
+                f"- {r['SKU_ID']} en {r['CEDI_Destino']}: {r['Accion_Recomendada']}, "
+                f"beneficio {money(r['Beneficio_Neto'])}"
+            )
+    if not model_metrics.empty:
+        best = model_metrics.sort_values("f1_risk", ascending=False).head(1).iloc[0]
+        lines.append(
+            f"Modelo con mejor F1 riesgo en comparación: {best.get('model', 'N/D')} "
+            f"con F1={best.get('f1_risk', 0):.3f}, recall={best.get('recall_risk', 0):.3f}."
+        )
+    if live_decision:
+        lines.append("Caso vivo seleccionado:")
+        lines.append(json.dumps({k: v for k, v in live_decision.items() if k != "Escenarios"}, ensure_ascii=False, default=str))
+    if agent_brief:
+        lines.append("Brief A2A-lite disponible: sí.")
+    return "\n".join(lines)
+
+
+def local_agent_answer(question: str, context: str, live_decision: Optional[Dict[str, Any]]) -> str:
+    """Fallback local para responder sin API key. No inventa datos; usa reglas simples."""
+    q = question.lower()
+
+    if any(word in q for word in ["quiebre", "stock", "riesgo", "quedar sin producto"]):
+        if live_decision:
+            return (
+                f"Para el caso seleccionado, el riesgo estimado es **{pct(live_decision['Riesgo_Probabilidad'])}** "
+                f"y el nivel es **{live_decision['Nivel_Riesgo']}**. En lenguaje de negocio: el sistema está evaluando "
+                f"si el inventario actual alcanza hasta que llegue el reabasto. La demanda segura estimada es "
+                f"**{live_decision['Demanda_Estimada_LT_Segura']:,.0f} unidades** y se requieren "
+                f"**{live_decision['Unidades_Necesarias']:,} unidades** adicionales."
+            )
+        return "El riesgo de quiebre indica la probabilidad de que un SKU no tenga inventario suficiente durante el lead time. Es como revisar si la comida en el refrigerador alcanza hasta la próxima compra."
+
+    if any(word in q for word in ["mover", "transfer", "transferir", "cedi", "origen"]):
+        if live_decision:
+            return (
+                f"La recomendación para el caso seleccionado es **{live_decision['Accion_Recomendada']}**. "
+                f"Origen recomendado: **{live_decision['CEDI_Origen_Recomendado']}**. "
+                f"Unidades a transferir: **{live_decision['Unidades_A_Transferir']:,}**. "
+                f"La razón es: {live_decision['Razon']}"
+            )
+        return "La transferencia se recomienda solo si hay un CEDI origen con excedente suficiente y si la pérdida evitada supera el costo logístico."
+
+    if any(word in q for word in ["costo", "beneficio", "dinero", "roi", "perdida", "pérdida"]):
+        if live_decision:
+            return (
+                f"Para el caso seleccionado: pérdida esperada sin actuar = **{money(live_decision['Perdida_Esperada_Sin_Actuar'])}**, "
+                f"costo de transferencia = **{money(live_decision['Costo_Transferencia'])}**, "
+                f"pérdida evitada = **{money(live_decision['Perdida_Evitada'])}**, "
+                f"beneficio neto = **{money(live_decision['Beneficio_Neto'])}**. "
+                f"La lógica es simple: conviene actuar cuando evitar la pérdida cuesta menos que quedarse sin producto."
+            )
+        return "El motor compara pérdida esperada contra costo de transferencia. Si el beneficio neto es positivo, la acción tiene sentido financiero."
+
+    if any(word in q for word in ["modelo", "xgboost", "ml", "machine", "por qué"]):
+        return (
+            "El modelo XGBoost se usa porque funciona muy bien con datos tabulares y puede capturar relaciones no lineales, "
+            "por ejemplo: bajo stock + alto lead time + promoción activa = mayor riesgo. Pero el modelo no decide solo: "
+            "su probabilidad alimenta un motor determinista de costo-beneficio."
+        )
+
+    if any(word in q for word in ["agente", "a2a", "chat", "llm", "gemini"]):
+        return (
+            "El agente funciona como una capa de explicación. El patrón A2A-lite separa responsabilidades: un agente interpreta riesgo, "
+            "otro costos, otro políticas y otro comunica al usuario. Para evitar alucinaciones, los números vienen del modelo y del decision engine, no del LLM."
+        )
+
+    if any(word in q for word in ["gcp", "cloud", "vertex", "bigquery", "arquitectura"]):
+        return (
+            "La ruta cloud-ready sería: fuentes ERP/WMS/POS → BigQuery → Vertex AI para entrenamiento/registro/monitoreo → "
+            "servicios Cloud Run para tools deterministas → agentes interoperables vía A2A → dashboard ejecutivo."
+        )
+
+    return (
+        "Puedo ayudarte a interpretar el riesgo, la recomendación, los costos, el modelo, los agentes o la arquitectura. "
+        "Ejemplo: '¿por qué conviene mover inventario en este caso?' o 'explícame el beneficio neto'."
     )
-    st.error("Faltan archivos en outputs/. Ejecuta primero los scripts 01, 02, 03 y 04.")
-    st.code(
-        """python src/01_eda_target_features.py --input data/Data_Prueba_Tecnica_Herdez_IA.xlsx
-python src/02_train_models.py --processed outputs/herdez_features_dataset.csv
-python src/03_decision_engine.py --processed outputs/herdez_features_dataset.csv --model models/best_stockout_model.joblib
-python src/04_agent_system_a2a_simple.py --mode fallback --max-alerts 8
-python -m streamlit run app.py""",
-        language="bash",
-    )
-    st.stop()
 
 
-# Normalización ligera de fechas y acciones.
-for df in [decisions, alerts, features, time_series]:
-    if not df.empty and "Fecha" in df.columns:
-        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
+def gemini_agent_answer(question: str, context: str) -> Optional[str]:
+    """Respuesta opcional con Gemini vía LangChain. Si falla, regresa None."""
+    api_key = get_secret("GEMINI_API_KEY") or get_secret("GOOGLE_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
 
-if not decisions.empty and "Accion_Recomendada" in decisions.columns:
-    decisions["Accion_Legible"] = decisions["Accion_Recomendada"].apply(clean_action)
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            google_api_key=api_key,
+            temperature=0.2,
+        )
+        prompt = f"""
+# Tu identidad
+Eres un copiloto ejecutivo de Supply Chain y Applied AI. Explicas decisiones de inventario de forma clara para usuarios no técnicos.
+
+# Tu misión
+Responder preguntas sobre el dashboard Herdez Smart-Supply usando únicamente el contexto disponible.
+
+# Límites
+- No inventes números.
+- Si falta información, dilo claramente.
+- Explica con lenguaje de negocio y, si ayuda, agrega una analogía sencilla.
+- Mantén la respuesta en español.
+
+# Contexto disponible
+{context}
+
+# Pregunta del usuario
+{question}
+"""
+        response = llm.invoke(prompt)
+        return getattr(response, "content", str(response))
+    except Exception:
+        return None
 
 
-# ============================================================
-# 6. SIDEBAR: CENTRO DE CONTROL GUIADO
-# ============================================================
+# =============================================================================
+# 7. CARGA PRINCIPAL
+# =============================================================================
+
+features = load_csv("herdez_features_dataset.csv")
+scored_alerts = load_csv("scored_stockout_alerts.csv")
+recommendations = load_csv("decision_recommendations.csv")
+model_metrics = load_csv("model_comparison_metrics.csv")
+risk_by_sku = load_csv("risk_by_sku.csv")
+risk_by_cedi = load_csv("risk_by_cedi.csv")
+agent_brief = load_markdown("agent_executive_brief_a2a_simple.md")
+agent_registry = load_json("agent_a2a_simple_registry.json")
+model_artifact = load_model_artifact()
+
+if scored_alerts.empty and not features.empty:
+    scored_alerts = score_dataset_cached(features)
+
+
+# =============================================================================
+# 8. SIDEBAR / CENTRO DE CONTROL GUIADO
+# =============================================================================
 
 with st.sidebar:
-    st.markdown("## 🎛️ Centro de Control Guiado")
-    st.caption("Usa este panel como manual interactivo. Está diseñado para explicar el caso sin asumir conocimiento previo de Supply Chain.")
+    st.markdown("## 🎛️ Centro de Control")
+    st.caption("Navega el producto como si fueras Director de Supply Chain o Gerente de IA.")
 
-    with st.expander("🧭 ¿Cómo leo este dashboard?", expanded=True):
+    page = st.radio(
+        "Modo de trabajo",
+        [
+            "1) Estado ejecutivo",
+            "2) Predicción en vivo",
+            "3) Simulador operativo",
+            "4) Chat con agente",
+            "5) Arquitectura y trazabilidad",
+        ],
+        index=1,
+    )
+
+    st.divider()
+    with st.expander("📘 ¿Cómo usar esta demo?", expanded=True):
         st.markdown(
             """
-            **Lee de arriba hacia abajo:**
-            1. **Estado:** ve si hay riesgo operativo.
-            2. **Exploración:** identifica SKU, CEDI y costo.
-            3. **Contexto:** entiende por qué el agente recomienda mover o esperar.
+1. Revisa el **Estado ejecutivo** para ver el panorama.
+2. Entra a **Predicción en vivo** y selecciona un SKU/CEDI.
+3. Modifica stock, ventas o lead time para simular cambios.
+4. Consulta el **chat** para explicar la recomendación.
 
-            La idea no es ver muchas gráficas; es responder una pregunta:
-            **¿qué acción evita más pérdida con menor costo?**
+Analogía: el sistema revisa si tienes suficiente producto en el “refrigerador” hasta que llegue la próxima compra. Si no alcanza, calcula si conviene pedir prestado producto a otro CEDI.
             """
         )
 
-    with st.expander("👥 Historias de usuario"):
+    with st.expander("💬 Preguntas que puedes probar"):
         st.markdown(
             """
-            **Director de Supply Chain:**
-            > Quiero saber qué productos están en riesgo y qué acción reduce ventas perdidas.
-
-            **Gerente de IA:**
-            > Quiero ver separación entre modelo ML, motor determinista y agente explicativo.
-
-            **Analista operativo:**
-            > Quiero filtrar por CEDI o SKU para decidir prioridades del día.
+- ¿Cómo sé si me voy a quedar sin producto?
+- ¿Por qué conviene transferir inventario?
+- ¿Qué significa beneficio neto?
+- ¿Por qué XGBoost y no solo un LLM?
+- ¿Cómo escalaría esto a GCP?
             """
         )
 
-    with st.expander("💬 Preguntas que puedes probar en el chat"):
-        suggested_questions = [
-            "¿Cuál es la alerta más importante y por qué?",
-            "¿Cómo sé si me voy a quedar sin producto la próxima semana?",
-            "¿Qué significa que el riesgo esté en color rojo?",
-            "¿Por qué no siempre conviene mover inventario?",
-            "¿Cómo puedo reducir costo logístico usando este dashboard?",
-            "Explícame la arquitectura para alguien de negocio.",
-            "Explícame la arquitectura para el gerente técnico.",
-        ]
-        for q in suggested_questions:
-            if st.button(q, key=f"suggest_{q}"):
-                st.session_state["pending_question"] = q
 
-    st.divider()
-    st.markdown("### 🔎 Filtros de exploración")
-
-    cedis = sorted(decisions["CEDI_Destino"].dropna().unique().tolist()) if "CEDI_Destino" in decisions else []
-    skus = sorted(decisions["SKU_ID"].dropna().unique().tolist()) if "SKU_ID" in decisions else []
-    actions = sorted(decisions["Accion_Legible"].dropna().unique().tolist()) if "Accion_Legible" in decisions else []
-
-    selected_cedis = st.multiselect("CEDI destino", cedis, default=cedis)
-    selected_skus = st.multiselect("SKU", skus, default=skus)
-    selected_actions = st.multiselect("Acción recomendada", actions, default=actions)
-
-    min_risk = st.slider("Riesgo mínimo", 0, 100, 0, 5)
-    top_n = st.slider("Número de alertas visibles", 5, 50, 15, 5)
-
-    st.divider()
-    st.caption("Versión local-first: el dashboard lee artefactos preprocesados. No reentrena modelos en cada carga.")
-
-
-# ============================================================
-# 7. FILTRADO DE DATOS
-# ============================================================
-
-filtered = decisions.copy()
-if selected_cedis and "CEDI_Destino" in filtered.columns:
-    filtered = filtered[filtered["CEDI_Destino"].isin(selected_cedis)]
-if selected_skus and "SKU_ID" in filtered.columns:
-    filtered = filtered[filtered["SKU_ID"].isin(selected_skus)]
-if selected_actions and "Accion_Legible" in filtered.columns:
-    filtered = filtered[filtered["Accion_Legible"].isin(selected_actions)]
-if "Riesgo_Probabilidad" in filtered.columns:
-    filtered = filtered[filtered["Riesgo_Probabilidad"] >= (min_risk / 100)]
-
-sort_col = "Beneficio_Neto" if "Beneficio_Neto" in filtered.columns else "Riesgo_Probabilidad"
-if sort_col in filtered.columns:
-    filtered = filtered.sort_values(sort_col, ascending=False)
-
-visible_decisions = filtered.head(top_n).copy()
-
-
-# ============================================================
-# 8. HERO / INTRO NARRATIVA
-# ============================================================
+# =============================================================================
+# 9. HEADER
+# =============================================================================
 
 st.markdown(
     """
     <div class="hero">
-        <h1>📦 Herdez Smart-Supply</h1>
-        <p>
-        Sistema local-first de IA para anticipar quiebres de stock y recomendar acciones correctivas.
-        Combina Machine Learning, cálculo costo-beneficio y agentes A2A-lite para explicar decisiones de inventario
-        en lenguaje de negocio.
-        </p>
+      <div class="hero-title">📦 Herdez Smart-Supply</div>
+      <div class="hero-subtitle">
+        Producto analítico local-first para anticipar quiebres de stock, calcular si conviene mover inventario
+        y explicar la decisión con un agente conversacional. No es solo un reporte: permite probar casos en vivo.
+      </div>
+      <br/>
+      <span class="pill pill-blue">ML Predictivo</span>
+      <span class="pill pill-green">Costo-beneficio</span>
+      <span class="pill pill-amber">A2A-lite</span>
+      <span class="pill pill-red">Prevención de quiebres</span>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-explanation(
-    "Objetivo del producto",
-    "Este tablero responde: <strong>¿qué productos podrían quedarse sin inventario, cuánto costaría no actuar y cuándo conviene transferir inventario desde otro CEDI?</strong>",
-    "info",
-)
-
-
-# ============================================================
-# 9. CAPA 1: ESTADO MACRO
-# ============================================================
-
-section(
-    "1) Capa de Estado: ¿qué tan crítica está la operación?",
-    "Esta capa resume la salud del sistema. Usa colores psicológicos: rojo para alerta, verde para beneficio, azul para contexto analítico y amarillo para revisión.",
-)
-
-n_alerts = len(filtered)
-high_risk_count = int((filtered.get("Nivel_Riesgo", pd.Series(dtype=str)).astype(str).str.lower() == "alto").sum()) if not filtered.empty else 0
-transfer_count = int((filtered.get("Accion_Recomendada", pd.Series(dtype=str)) == "TRANSFER_INVENTORY").sum()) if not filtered.empty else 0
-review_count = int((filtered.get("Accion_Recomendada", pd.Series(dtype=str)) == "EXPEDITE_REPLENISHMENT_OR_REVIEW").sum()) if not filtered.empty else 0
-expected_loss = filtered.get("Perdida_Esperada_Sin_Actuar", pd.Series(dtype=float)).sum() if not filtered.empty else 0
-net_benefit = filtered.get("Beneficio_Neto", pd.Series(dtype=float)).sum() if not filtered.empty else 0
-avg_risk = filtered.get("Riesgo_Probabilidad", pd.Series(dtype=float)).mean() if not filtered.empty else 0
-
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    metric_card("Alertas filtradas", number(n_alerts), "Casos SKU/CEDI que requieren atención en la vista actual.", "info")
-with c2:
-    metric_card("Riesgo promedio", pct(avg_risk), "Probabilidad promedio de quiebre según el modelo ML.", "danger" if avg_risk >= 0.7 else "warning")
-with c3:
-    metric_card("Pérdida esperada", money(expected_loss), "Estimación de ventas/servicio en riesgo si no se actúa.", "danger")
-with c4:
-    metric_card("Beneficio neto", money(net_benefit), "Valor potencial de actuar después de restar costo logístico.", "success")
-
-analogy("El inventario funciona como tener comida extra en el refrigerador. Si sabes que llegan visitas antes de que puedas ir al súper, necesitas suficiente reserva; si no, tienes que pedir apoyo o comprar de emergencia.")
-
-
-# ============================================================
-# 10. CAPA 2: EXPLORACIÓN VISUAL
-# ============================================================
-
-section(
-    "2) Capa de Exploración: ¿dónde está el problema?",
-    "Aquí exploramos el riesgo por producto, CEDI y acción recomendada. Las gráficas no son decoración: cada una responde una pregunta operativa concreta.",
-)
-
-plot_template = "plotly_white"
-muted_sequence = ["#3b6f9e", "#6b8faf", "#1f2937", "#7c8da5", "#94a3b8", "#0f766e", "#b45309", "#b91c1c"]
-
-left, right = st.columns([1.15, 0.85])
-
-with left:
-    with st.container(border=True):
-        st.markdown("#### 🏭 Riesgo por CEDI")
-        explanation(
-            "Cómo leerlo",
-            "Un CEDI con mayor pérdida o más alertas puede convertirse en cuello de botella. Prioriza donde el impacto económico y operativo sea más alto.",
-            "info",
-        )
-        if not filtered.empty and "CEDI_Destino" in filtered.columns:
-            cedi_chart = (
-                filtered.groupby("CEDI_Destino", as_index=False)
-                .agg(
-                    alertas=("SKU_ID", "count"),
-                    perdida=("Perdida_Esperada_Sin_Actuar", "sum"),
-                    beneficio=("Beneficio_Neto", "sum"),
-                    riesgo=("Riesgo_Probabilidad", "mean"),
-                )
-                .sort_values("perdida", ascending=False)
-            )
-            fig = px.bar(
-                cedi_chart,
-                x="CEDI_Destino",
-                y="perdida",
-                color="riesgo",
-                text="alertas",
-                color_continuous_scale=[[0, "#6b8faf"], [0.55, "#b45309"], [1, "#b91c1c"]],
-                labels={"CEDI_Destino": "CEDI destino", "perdida": "Pérdida esperada", "riesgo": "Riesgo promedio"},
-            )
-            fig.update_traces(texttemplate="%{text} alertas", textposition="outside")
-            fig.update_layout(template=plot_template, height=410, margin=dict(l=10, r=10, t=20, b=10))
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No hay datos para graficar por CEDI con los filtros actuales.")
-
-with right:
-    with st.container(border=True):
-        st.markdown("#### 🎯 Acciones recomendadas")
-        explanation(
-            "Cómo leerlo",
-            "No todas las alertas se resuelven moviendo inventario. Si no hay CEDI origen seguro, el sistema recomienda revisar reabasto o escalar.",
-            "warning",
-        )
-        if not filtered.empty and "Accion_Legible" in filtered.columns:
-            action_chart = filtered["Accion_Legible"].value_counts().reset_index()
-            action_chart.columns = ["Acción", "Casos"]
-            fig = px.pie(
-                action_chart,
-                names="Acción",
-                values="Casos",
-                hole=0.58,
-                color_discrete_sequence=muted_sequence,
-            )
-            fig.update_layout(template=plot_template, height=410, margin=dict(l=10, r=10, t=20, b=10), showlegend=True)
-            fig.update_traces(textposition="inside", textinfo="percent+label")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No hay acciones con los filtros actuales.")
-
-
-left2, right2 = st.columns([1, 1])
-
-with left2:
-    with st.container(border=True):
-        st.markdown("#### 📦 Productos más críticos")
-        explanation(
-            "Cómo leerlo",
-            "Si un SKU aparece arriba, no significa que sea malo; significa que necesita atención porque combina demanda, inventario y costo de quiebre.",
-            "info",
-        )
-        if not filtered.empty and "SKU_ID" in filtered.columns:
-            sku_chart = (
-                filtered.groupby("SKU_ID", as_index=False)
-                .agg(
-                    perdida=("Perdida_Esperada_Sin_Actuar", "sum"),
-                    beneficio=("Beneficio_Neto", "sum"),
-                    riesgo=("Riesgo_Probabilidad", "mean"),
-                )
-                .sort_values("perdida", ascending=True)
-            )
-            fig = px.bar(
-                sku_chart,
-                y="SKU_ID",
-                x="perdida",
-                orientation="h",
-                color="riesgo",
-                color_continuous_scale=[[0, "#6b8faf"], [0.55, "#b45309"], [1, "#b91c1c"]],
-                labels={"SKU_ID": "SKU", "perdida": "Pérdida esperada", "riesgo": "Riesgo promedio"},
-            )
-            fig.update_layout(template=plot_template, height=420, margin=dict(l=10, r=10, t=20, b=10))
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No hay datos por SKU con los filtros actuales.")
-
-with right2:
-    with st.container(border=True):
-        st.markdown("#### 📈 Evolución temporal del riesgo")
-        explanation(
-            "Cómo leerlo",
-            "Muestra si el riesgo aumenta o disminuye por día. Es útil para explicar si el problema es puntual o una tendencia.",
-            "info",
-        )
-        if not time_series.empty and {"Fecha", "riesgo_promedio"}.issubset(time_series.columns):
-            fig = px.line(
-                time_series,
-                x="Fecha",
-                y="riesgo_promedio",
-                markers=True,
-                labels={"Fecha": "Fecha", "riesgo_promedio": "Riesgo promedio"},
-            )
-            fig.update_traces(line=dict(color="#3b6f9e", width=3), marker=dict(size=6))
-            fig.update_layout(template=plot_template, height=420, margin=dict(l=10, r=10, t=20, b=10), yaxis_tickformat=".0%")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No encontré la serie temporal del riesgo.")
-
-
-# ============================================================
-# 11. CAPA 3: CONTEXTO Y RECOMENDACIÓN OPERATIVA
-# ============================================================
-
-section(
-    "3) Capa de Contexto: ¿qué decisión tomamos y por qué?",
-    "Esta capa traduce datos a acción. La recomendación no sale directamente del LLM: primero se calcula con reglas y costo-beneficio.",
-)
-
-if visible_decisions.empty:
-    st.warning("No hay alertas con los filtros actuales. Reduce filtros o baja el riesgo mínimo.")
-else:
-    # Selección de alerta para explicación detallada.
-    option_labels = []
-    for idx, row in visible_decisions.iterrows():
-        label = f"{row.get('SKU_ID', 'SKU')} | {row.get('CEDI_Destino', 'CEDI')} | {clean_action(row.get('Accion_Recomendada', ''))} | Beneficio {money(row.get('Beneficio_Neto', 0))}"
-        option_labels.append((idx, label))
-
-    selected_idx = st.selectbox(
-        "Selecciona una alerta para explicarla como caso de negocio",
-        options=[idx for idx, _ in option_labels],
-        format_func=lambda idx: dict(option_labels).get(idx, str(idx)),
+if features.empty or recommendations.empty:
+    st.error("No encontré los archivos mínimos en outputs/. Sube outputs/ y models/ al repo o ejecuta 01→04 primero.")
+    st.code(
+        "python src/01_eda_target_features.py --input data/Data_Prueba_Tecnica_Herdez_IA.xlsx\n"
+        "python src/02_train_models.py --processed outputs/herdez_features_dataset.csv\n"
+        "python src/03_decision_engine.py --processed outputs/herdez_features_dataset.csv --model models/best_stockout_model.joblib\n"
+        "python src/04_agent_system_a2a_simple.py --mode fallback --max-alerts 8",
+        language="bash",
     )
-    selected = visible_decisions.loc[selected_idx]
-
-    a, b, c = st.columns([1, 1, 1])
-    with a:
-        metric_card("SKU / CEDI", f"{selected.get('SKU_ID', 'N/D')}", f"Destino: {selected.get('CEDI_Destino', 'N/D')}", "info")
-    with b:
-        metric_card("Riesgo estimado", pct(selected.get("Riesgo_Probabilidad", 0)), "Probabilidad de quiebre calculada por el modelo.", "danger")
-    with c:
-        metric_card("Acción", clean_action(selected.get("Accion_Recomendada", "N/D")), "Recomendación generada por el motor costo-beneficio.", "success" if selected.get("Accion_Recomendada") == "TRANSFER_INVENTORY" else "warning")
-
-    l, r = st.columns([1, 1])
-    with l:
-        with st.container(border=True):
-            st.markdown("#### 🧮 Proyección de cobertura")
-            explanation(
-                "Qué representa",
-                "Compara el inventario actual contra la demanda estimada durante el lead time. Si la demanda supera el stock, aparece el riesgo de quiebre.",
-                "danger",
-            )
-            projection_df = pd.DataFrame(
-                {
-                    "Concepto": ["Stock actual", "Demanda estimada durante lead time", "Unidades necesarias"],
-                    "Unidades": [
-                        float(selected.get("Stock_Actual", 0) or 0),
-                        float(selected.get("Demanda_Estimada_LT_Segura", 0) or 0),
-                        float(selected.get("Unidades_Necesarias", 0) or 0),
-                    ],
-                }
-            )
-            fig = px.bar(
-                projection_df,
-                x="Concepto",
-                y="Unidades",
-                color="Concepto",
-                color_discrete_sequence=["#3b6f9e", "#b45309", "#b91c1c"],
-                text="Unidades",
-            )
-            fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
-            fig.update_layout(template=plot_template, height=390, showlegend=False, margin=dict(l=10, r=10, t=20, b=10))
-            st.plotly_chart(fig, use_container_width=True)
-            analogy("El lead time es como el tiempo que tarda en llegar tu pedido del súper. Si tu comida no alcanza hasta que llegue el pedido, necesitas conseguir comida de otra fuente.")
-
-    with r:
-        with st.container(border=True):
-            st.markdown("#### 💰 Comparación económica")
-            explanation(
-                "Qué representa",
-                "Compara cuánto se perdería si no actuamos contra cuánto cuesta transferir inventario. Si el beneficio neto es positivo, actuar tiene sentido económico.",
-                "success",
-            )
-            money_df = pd.DataFrame(
-                {
-                    "Concepto": ["Pérdida sin actuar", "Costo transferencia", "Beneficio neto"],
-                    "MXN": [
-                        float(selected.get("Perdida_Esperada_Sin_Actuar", 0) or 0),
-                        float(selected.get("Costo_Transferencia", 0) or 0),
-                        float(selected.get("Beneficio_Neto", 0) or 0),
-                    ],
-                }
-            )
-            fig = px.bar(
-                money_df,
-                x="Concepto",
-                y="MXN",
-                color="Concepto",
-                color_discrete_sequence=["#b91c1c", "#b45309", "#15803d"],
-                text="MXN",
-            )
-            fig.update_traces(texttemplate="$%{text:,.0f}", textposition="outside")
-            fig.update_layout(template=plot_template, height=390, showlegend=False, margin=dict(l=10, r=10, t=20, b=10))
-            st.plotly_chart(fig, use_container_width=True)
-
-    with st.container(border=True):
-        st.markdown("#### 🧾 Explicación ejecutiva de la alerta seleccionada")
-        explanation_text = selected.get("Explicacion_Ejecutiva", "No hay explicación disponible para esta alerta.")
-        st.markdown(f"> {explanation_text}")
-        st.caption(f"Razón técnica: {selected.get('Razon', 'N/D')}")
-
-    with st.expander("Ver tabla completa de recomendaciones priorizadas", expanded=False):
-        display_cols = [
-            "Fecha",
-            "SKU_ID",
-            "CEDI_Destino",
-            "Riesgo_Probabilidad",
-            "Nivel_Riesgo",
-            "Accion_Legible",
-            "CEDI_Origen_Recomendado",
-            "Unidades_A_Transferir",
-            "Perdida_Esperada_Sin_Actuar",
-            "Costo_Transferencia",
-            "Beneficio_Neto",
-            "Razon",
-        ]
-        available_cols = [c for c in display_cols if c in visible_decisions.columns]
-        table = visible_decisions[available_cols].copy()
-        if "Riesgo_Probabilidad" in table.columns:
-            table["Riesgo_Probabilidad"] = table["Riesgo_Probabilidad"].apply(lambda x: pct(x))
-        for col in ["Perdida_Esperada_Sin_Actuar", "Costo_Transferencia", "Beneficio_Neto"]:
-            if col in table.columns:
-                table[col] = table[col].apply(money)
-        st.dataframe(table, use_container_width=True, hide_index=True)
+    st.stop()
 
 
-# ============================================================
-# 12. MODELO ML Y AGENTES A2A-LITE
-# ============================================================
+# =============================================================================
+# 10. KPIs GLOBALES
+# =============================================================================
 
-section(
-    "4) Modelo ML + Agentes: ¿cómo se construye confianza?",
-    "La confianza no viene de decir 'la IA lo dijo'. Viene de separar responsabilidades: el modelo predice, el motor calcula y los agentes explican.",
-)
+total_alerts = len(recommendations)
+high_risk = int((recommendations["Nivel_Riesgo"] == "Alto").sum()) if "Nivel_Riesgo" in recommendations else 0
+expected_loss = float(recommendations["Perdida_Esperada_Sin_Actuar"].sum())
+net_benefit = float(recommendations["Beneficio_Neto"].sum())
+transfer_units = int(recommendations["Unidades_A_Transferir"].sum())
 
-m1, m2 = st.columns([1, 1])
+k1, k2, k3, k4, k5 = st.columns(5)
+k1.metric("Alertas priorizadas", f"{total_alerts}")
+k2.metric("Riesgo alto", f"{high_risk}")
+k3.metric("Pérdida esperada", money(expected_loss))
+k4.metric("Beneficio neto", money(net_benefit))
+k5.metric("Unidades sugeridas", f"{transfer_units:,}")
 
-with m1:
-    with st.container(border=True):
-        st.markdown("#### 🤖 Comparación de modelos")
-        explanation(
-            "Por qué importa",
-            "No elegimos un modelo por moda. Comparamos alternativas y priorizamos detectar quiebres reales sin disparar demasiadas falsas alarmas.",
-            "info",
+
+# =============================================================================
+# 11. PÁGINAS
+# =============================================================================
+
+if page.startswith("1"):
+    st.markdown("### 1) Estado ejecutivo")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown(
+        """
+<div class="mini-title">¿Qué estoy viendo?</div>
+<div class="helper-text">
+Esta sección resume dónde está el riesgo operativo. La prioridad no es solo detectar quiebres,
+sino decidir si actuar genera valor económico. Rojo significa urgencia, verde significa beneficio neto positivo,
+y azul representa tendencias o comparación.
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = px.bar(
+            recommendations.groupby("CEDI_Destino", as_index=False)["Riesgo_Probabilidad"].mean().sort_values("Riesgo_Probabilidad", ascending=False),
+            x="CEDI_Destino",
+            y="Riesgo_Probabilidad",
+            title="Riesgo promedio por CEDI destino",
+            color="Riesgo_Probabilidad",
+            color_continuous_scale="Blues",
         )
-        if not model_metrics.empty:
-            metric_to_show = st.selectbox(
-                "Métrica para comparar",
-                options=[c for c in ["f1_risk", "recall_risk", "precision_risk", "roc_auc", "accuracy"] if c in model_metrics.columns],
-                index=0,
-            )
-            mm = model_metrics.sort_values(metric_to_show, ascending=True)
-            fig = px.bar(
-                mm,
-                y="model",
-                x=metric_to_show,
-                orientation="h",
-                color=metric_to_show,
-                color_continuous_scale=[[0, "#6b8faf"], [1, "#15803d"]],
-                labels={"model": "Modelo", metric_to_show: "Score"},
-            )
-            fig.update_layout(template=plot_template, height=390, margin=dict(l=10, r=10, t=20, b=10), xaxis_tickformat=".0%")
-            st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(yaxis_tickformat=".0%", height=390, coloraxis_showscale=False)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Lectura: identifica qué centro de distribución concentra mayor probabilidad de quedarse sin producto.")
+
+    with c2:
+        fig = px.bar(
+            recommendations.groupby("SKU_ID", as_index=False)["Beneficio_Neto"].sum().sort_values("Beneficio_Neto", ascending=False),
+            x="SKU_ID",
+            y="Beneficio_Neto",
+            title="Beneficio neto potencial por SKU",
+            color="Beneficio_Neto",
+            color_continuous_scale="Greens",
+        )
+        fig.update_layout(height=390, coloraxis_showscale=False, xaxis_tickangle=-25)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Lectura: prioriza productos donde actuar puede evitar más pérdida económica.")
+
+    st.markdown("### Top recomendaciones")
+    cols = [
+        "Fecha", "SKU_ID", "CEDI_Destino", "Riesgo_Probabilidad", "Accion_Recomendada",
+        "CEDI_Origen_Recomendado", "Unidades_A_Transferir", "Perdida_Esperada_Sin_Actuar", "Beneficio_Neto",
+    ]
+    st.dataframe(recommendations.sort_values("Beneficio_Neto", ascending=False)[cols], use_container_width=True, hide_index=True)
+
+
+elif page.startswith("2") or page.startswith("3"):
+    st.markdown("### 2) Predicción en vivo y simulación operativa")
+    st.info("Aquí ya no solo vemos archivos precomputados: seleccionamos un caso real, modificamos variables y ejecutamos la predicción + recomendación en vivo.")
+
+    # Filtros para elegir caso base
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        sku = st.selectbox("SKU", sorted(features["SKU_ID"].dropna().unique()))
+    with f2:
+        cedi = st.selectbox("CEDI", sorted(features["CEDI"].dropna().unique()))
+    case_df = features[(features["SKU_ID"] == sku) & (features["CEDI"] == cedi)].sort_values("Fecha")
+    with f3:
+        fecha = st.selectbox("Fecha", case_df["Fecha"].dt.date.astype(str).tolist())
+
+    base_row = case_df[case_df["Fecha"].dt.date.astype(str) == fecha].iloc[0]
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown("<div class='mini-title'>Variables editables del caso</div>", unsafe_allow_html=True)
+    st.markdown("<div class='helper-text'>Modifica estas variables para responder preguntas tipo: ¿qué pasa si baja el stock?, ¿si sube la demanda?, ¿si el proveedor tarda más?</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    e1, e2, e3, e4 = st.columns(4)
+    with e1:
+        stock = st.number_input("Stock actual", min_value=0.0, value=float(base_row["Stock_Actual"]), step=10.0)
+        ventas = st.number_input("Ventas del día", min_value=0.0, value=float(base_row["Ventas_Unidades"]), step=5.0)
+    with e2:
+        ventas7 = st.number_input("Ventas media 7 días", min_value=1.0, value=float(base_row["Ventas_Media_7d"]), step=5.0)
+        lead = st.number_input("Lead time días", min_value=1, max_value=30, value=int(base_row["Lead_Time_Dias"]), step=1)
+    with e3:
+        promo = st.selectbox("Promoción activa", [0, 1], index=int(base_row.get("Promocion_Activa_Num", 0)))
+        clima_options = sorted(features["Clima"].dropna().unique().tolist())
+        clima = st.selectbox("Clima", clima_options, index=clima_options.index(base_row["Clima"]) if base_row["Clima"] in clima_options else 0)
+    with e4:
+        costo_quiebre = st.number_input("Costo quiebre diario", min_value=0.0, value=float(base_row["Costo_Quiebre_Stock_Diario"]), step=500.0)
+        costo_transfer = st.number_input("Costo transferencia unidad", min_value=0.0, value=float(base_row["Costo_Transferencia_Unidad"]), step=1.0)
+
+    live_row = base_row.copy()
+    live_row["Stock_Actual"] = stock
+    live_row["Ventas_Unidades"] = ventas
+    live_row["Ventas_Media_7d"] = ventas7
+    live_row["Lead_Time_Dias"] = lead
+    live_row["Promocion_Activa"] = promo
+    live_row["Promocion_Activa_Num"] = promo
+    live_row["Clima"] = clima
+    live_row["Costo_Quiebre_Stock_Diario"] = costo_quiebre
+    live_row["Costo_Transferencia_Unidad"] = costo_transfer
+
+    risk_prob, model_used = predict_live_risk(live_row, model_artifact)
+    live_decision = recommend_live_case(scored_alerts if not scored_alerts.empty else features, live_row, risk_prob)
+    st.session_state["live_decision"] = live_decision
+
+    risk_class = "risk-high" if live_decision["Nivel_Riesgo"] == "Alto" else "risk-medium" if live_decision["Nivel_Riesgo"] == "Medio" else "risk-low"
+
+    r1, r2, r3, r4 = st.columns(4)
+    r1.metric("Riesgo estimado", pct(risk_prob), help=f"Calculado con {model_used}")
+    r2.metric("Nivel", live_decision["Nivel_Riesgo"])
+    r3.metric("Unidades faltantes", f"{live_decision['Unidades_Necesarias']:,}")
+    r4.metric("Beneficio neto", money(live_decision["Beneficio_Neto"]))
+
+    st.markdown(f"<div class='decision-box {risk_class}'><b>Recomendación:</b> {live_decision['Accion_Recomendada']}<br>{live_decision['Explicacion_Ejecutiva']}</div>", unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        mini = pd.DataFrame(
+            {
+                "Concepto": ["Stock actual", "Demanda segura LT", "Unidades faltantes"],
+                "Unidades": [live_decision["Stock_Actual"], live_decision["Demanda_Estimada_LT_Segura"], live_decision["Unidades_Necesarias"]],
+            }
+        )
+        fig = px.bar(mini, x="Concepto", y="Unidades", color="Concepto", title="Cobertura de inventario del caso", color_discrete_sequence=px.colors.qualitative.Set2)
+        fig.update_layout(height=360, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Si la demanda segura supera al stock actual, aparece un faltante operativo.")
+    with c2:
+        money_df = pd.DataFrame(
+            {
+                "Concepto": ["Pérdida esperada", "Costo transferencia", "Pérdida evitada", "Beneficio neto"],
+                "Monto": [
+                    live_decision["Perdida_Esperada_Sin_Actuar"],
+                    live_decision["Costo_Transferencia"],
+                    live_decision["Perdida_Evitada"],
+                    live_decision["Beneficio_Neto"],
+                ],
+            }
+        )
+        fig = px.bar(money_df, x="Concepto", y="Monto", color="Concepto", title="Economía de la decisión", color_discrete_sequence=px.colors.qualitative.Pastel)
+        fig.update_layout(height=360, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("La acción tiene sentido si la pérdida evitada supera el costo de transferencia.")
+
+    with st.expander("Ver escenarios de CEDI origen evaluados"):
+        scenarios = pd.DataFrame(live_decision.get("Escenarios", []))
+        if scenarios.empty:
+            st.warning("No hubo CEDI origen con excedente suficiente para este caso.")
         else:
-            st.info("No encontré métricas de modelos.")
+            st.dataframe(scenarios, use_container_width=True, hide_index=True)
 
-with m2:
-    with st.container(border=True):
-        st.markdown("#### 🧠 Agentes A2A-lite")
-        explanation(
-            "Qué significa A2A-lite",
-            "Cada agente recibe un artefacto estructurado y produce otro. Es como una cadena de especialistas: riesgo → costo → política → comunicación ejecutiva.",
-            "info",
+
+elif page.startswith("4"):
+    st.markdown("### 4) Chat con agente")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown(
+        """
+<div class="mini-title">Chat ejecutivo</div>
+<div class="helper-text">
+Pregunta en lenguaje natural. El chat usa el contexto real del dashboard: recomendaciones, métricas,
+caso vivo seleccionado y brief A2A-lite. Si activas Gemini y hay API key, responde con LLM; si no, usa fallback local.
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    use_gemini = st.toggle("Usar Gemini si hay API key configurada", value=False)
+
+    example_cols = st.columns(3)
+    examples = [
+        "¿Por qué conviene transferir inventario en el caso seleccionado?",
+        "Explícame el beneficio neto como si fuera Director de Supply Chain.",
+        "¿Por qué el LLM no debe tomar la decisión financiera solo?",
+    ]
+    for col, ex in zip(example_cols, examples):
+        if col.button(ex):
+            st.session_state["pending_chat"] = ex
+
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = [
+            {"role": "assistant", "content": "Hola. Puedo explicarte riesgos, recomendaciones, costos, modelo, agentes y arquitectura. Selecciona un caso en 'Predicción en vivo' para dar respuestas más específicas."}
+        ]
+
+    for msg in st.session_state["chat_history"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    prompt = st.chat_input("Pregunta sobre el riesgo, costos, modelo, agentes o arquitectura…")
+    if "pending_chat" in st.session_state:
+        prompt = st.session_state.pop("pending_chat")
+
+    if prompt:
+        st.session_state["chat_history"].append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        live_decision = st.session_state.get("live_decision")
+        context = build_context_summary(recommendations, model_metrics, live_decision, agent_brief)
+        answer = gemini_agent_answer(prompt, context) if use_gemini else None
+        if not answer:
+            answer = local_agent_answer(prompt, context, live_decision)
+
+        st.session_state["chat_history"].append({"role": "assistant", "content": answer})
+        with st.chat_message("assistant"):
+            st.markdown(answer)
+
+
+else:
+    st.markdown("### 5) Arquitectura y trazabilidad")
+
+    a1, a2 = st.columns(2)
+    with a1:
+        st.markdown(
+            """
+#### MVP local-first
+```text
+Excel histórico
+  ↓
+pandas + feature engineering
+  ↓
+XGBoost guardado en joblib
+  ↓
+Decision Engine determinista
+  ↓
+Agentes A2A-lite / Chat
+  ↓
+Streamlit Dashboard
+```
+            """
         )
+    with a2:
+        st.markdown(
+            """
+#### Ruta cloud-ready GCP
+```text
+ERP/WMS/POS
+  ↓
+BigQuery
+  ↓
+Vertex AI Pipelines + Registry
+  ↓
+Endpoint / Batch Prediction
+  ↓
+Tools en Cloud Run
+  ↓
+Agentes interoperables vía A2A
+  ↓
+Dashboard ejecutivo
+```
+            """
+        )
+
+    st.markdown("#### Registro A2A-lite")
+    if agent_registry:
         if isinstance(agent_registry, dict):
             registry_data = agent_registry.get("agents", [])
         elif isinstance(agent_registry, list):
             registry_data = agent_registry
         else:
             registry_data = []
-        if registry_data:
-            registry_df = pd.DataFrame(registry_data)
-            st.dataframe(registry_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No encontré registro de agentes.")
-
-if agent_brief:
-    with st.expander("📄 Ver brief ejecutivo generado por el agente", expanded=False):
-        st.markdown(agent_brief)
-
-with st.expander("🔍 Ver artefactos estructurados del agente", expanded=False):
-    if agent_artifacts:
-        st.json(agent_artifacts)
+        st.dataframe(pd.DataFrame(registry_data), use_container_width=True, hide_index=True)
     else:
-        st.info("No encontré artefactos del agente.")
+        st.info("No encontré agent_a2a_simple_registry.json")
 
-
-# ============================================================
-# 13. SIMULADOR INTERACTIVO
-# ============================================================
-
-section(
-    "5) Simulador: ¿qué pasa si cambio la decisión?",
-    "Este módulo ayuda a explicar la lógica costo-beneficio sin fórmulas complicadas. Permite jugar con unidades, costo y pérdida para entender cuándo conviene actuar.",
-)
-
-sim_col1, sim_col2 = st.columns([0.9, 1.1])
-
-with sim_col1:
-    with st.container(border=True):
-        st.markdown("#### 🎚️ Parámetros")
-        sim_risk = st.slider("Probabilidad de quiebre", 0, 100, 80, 5) / 100
-        sim_daily_loss = st.number_input("Costo diario de quiebre (MXN)", min_value=0, value=8000, step=500)
-        sim_lead_time = st.slider("Lead time (días)", 1, 10, 5, 1)
-        sim_units = st.number_input("Unidades a transferir", min_value=0, value=500, step=50)
-        sim_cost_unit = st.number_input("Costo de transferencia por unidad", min_value=0.0, value=12.0, step=1.0)
-
-        sim_expected_loss = sim_risk * sim_daily_loss * sim_lead_time
-        sim_transfer_cost = sim_units * sim_cost_unit
-        sim_net = sim_expected_loss - sim_transfer_cost
-
-        metric_card("Resultado simulado", money(sim_net), "Beneficio neto = pérdida esperada evitada - costo de transferencia.", "success" if sim_net > 0 else "danger")
-
-with sim_col2:
-    with st.container(border=True):
-        st.markdown("#### 📊 Lectura del simulador")
-        sim_df = pd.DataFrame(
-            {
-                "Concepto": ["Pérdida esperada", "Costo transferencia", "Beneficio neto"],
-                "MXN": [sim_expected_loss, sim_transfer_cost, sim_net],
-            }
-        )
-        fig = px.bar(
-            sim_df,
-            x="Concepto",
-            y="MXN",
-            color="Concepto",
-            color_discrete_sequence=["#b91c1c", "#b45309", "#15803d" if sim_net >= 0 else "#b91c1c"],
-            text="MXN",
-        )
-        fig.update_traces(texttemplate="$%{text:,.0f}", textposition="outside")
-        fig.update_layout(template=plot_template, height=390, showlegend=False, margin=dict(l=10, r=10, t=20, b=10))
+    st.markdown("#### Comparación de modelos")
+    if not model_metrics.empty:
+        st.dataframe(model_metrics, use_container_width=True, hide_index=True)
+        fig = px.bar(model_metrics, x="model", y=["precision_risk", "recall_risk", "f1_risk"], barmode="group", title="Métricas para clase de riesgo")
+        fig.update_layout(height=390)
         st.plotly_chart(fig, use_container_width=True)
-        if sim_net > 0:
-            explanation("Interpretación", "La acción tiene sentido económico porque la pérdida evitada es mayor que el costo logístico.", "success")
-        else:
-            explanation("Interpretación", "No conviene mover inventario bajo estos supuestos. Sería mejor esperar reabasto o revisar otra fuente.", "danger")
 
 
-# ============================================================
-# 14. ARQUITECTURA
-# ============================================================
+# =============================================================================
+# 12. FOOTER
+# =============================================================================
 
-section(
-    "6) Arquitectura: local-first hoy, cloud-ready mañana",
-    "El prototipo evita costos de nube durante la prueba, pero está diseñado para escalar a GCP con BigQuery, Vertex AI y servicios de agentes.",
-)
-
-arch1, arch2 = st.columns([1, 1])
-with arch1:
-    with st.container(border=True):
-        st.markdown("#### 🧪 MVP local-first")
-        st.markdown(
-            """
-            ```text
-            Excel histórico
-                ↓
-            pandas / DuckDB
-                ↓
-            XGBoost
-                ↓
-            Decision Engine
-                ↓
-            Agentes A2A-lite
-                ↓
-            Streamlit Dashboard
-            ```
-            """
-        )
-        explanation("Ventaja", "Corre barato, rápido y con baja dependencia de infraestructura externa.", "success")
-
-with arch2:
-    with st.container(border=True):
-        st.markdown("#### ☁️ Ruta cloud-ready en GCP")
-        st.markdown(
-            """
-            ```text
-            ERP / WMS / POS
-                ↓
-            Cloud Storage / Pub/Sub / Dataflow
-                ↓
-            BigQuery
-                ↓
-            Vertex AI Training + Registry
-                ↓
-            Vertex AI Endpoint / Batch Prediction
-                ↓
-            Agentes A2A / Agent Platform
-                ↓
-            Looker / Streamlit / Cloud Run
-            ```
-            """
-        )
-        explanation("Ventaja", "Permite MLOps, monitoreo, versionado de modelos y escalamiento empresarial.", "info")
-
-
-# ============================================================
-# 15. CHAT EXPLICATIVO
-# ============================================================
-
-section(
-    "7) Chat explicativo: pregúntale al agente de negocio",
-    "El chat está diseñado para dar respuestas detalladas usando el contexto real del dashboard. Puede funcionar localmente o con Gemini si configuras la API key.",
-)
-
-
-def build_context_summary() -> str:
-    """Construye un resumen compacto del estado actual para el chat."""
-    top = filtered.sort_values("Beneficio_Neto", ascending=False).head(3) if "Beneficio_Neto" in filtered.columns else filtered.head(3)
-    top_lines = []
-    for _, row in top.iterrows():
-        top_lines.append(
-            f"- {row.get('SKU_ID','N/D')} en {row.get('CEDI_Destino','N/D')}: "
-            f"riesgo {pct(row.get('Riesgo_Probabilidad',0))}, "
-            f"acción {clean_action(row.get('Accion_Recomendada','N/D'))}, "
-            f"beneficio {money(row.get('Beneficio_Neto',0))}."
-        )
-    return "\n".join(top_lines)
-
-
-
-def local_chat_answer(question: str) -> str:
-    """Responde con reglas locales y datos cargados.
-
-    Esta función no pretende reemplazar un LLM. Sirve para demo estable sin API.
-    Usa patrones de pregunta frecuentes y responde con contexto real.
-    """
-    q = question.lower().strip()
-    top_context = build_context_summary()
-
-    top_alert = None
-    if not filtered.empty:
-        order_col = "Beneficio_Neto" if "Beneficio_Neto" in filtered.columns else "Riesgo_Probabilidad"
-        top_alert = filtered.sort_values(order_col, ascending=False).iloc[0]
-
-    if any(word in q for word in ["más importante", "prioridad", "principal", "primero"]):
-        if top_alert is None:
-            return "No tengo alertas con los filtros actuales. Reduce los filtros para ver prioridades."
-        return (
-            f"La alerta prioritaria es **{top_alert.get('SKU_ID','N/D')} en {top_alert.get('CEDI_Destino','N/D')}**.\n\n"
-            f"La priorizo porque combina: riesgo de quiebre de **{pct(top_alert.get('Riesgo_Probabilidad',0))}**, "
-            f"pérdida esperada de **{money(top_alert.get('Perdida_Esperada_Sin_Actuar',0))}** y beneficio neto estimado de "
-            f"**{money(top_alert.get('Beneficio_Neto',0))}**.\n\n"
-            f"Acción recomendada: **{clean_action(top_alert.get('Accion_Recomendada','N/D'))}**.\n\n"
-            "En lenguaje de negocio: esta es la alerta donde actuar puede proteger más venta o nivel de servicio con el mejor retorno operativo."
-        )
-
-    if any(word in q for word in ["sin producto", "quedar sin", "próxima semana", "stockout", "quiebre"]):
-        return (
-            "Para saber si puedes quedarte sin producto, mira la sección **Proyección de cobertura**.\n\n"
-            "La lógica es sencilla: comparamos el **stock actual** contra la **demanda esperada durante el lead time**. "
-            "Si la demanda esperada es mayor que el stock, el producto puede agotarse antes de que llegue el reabasto.\n\n"
-            "En el dashboard, el color rojo indica que el riesgo es alto. Es parecido a revisar si la comida del refrigerador alcanza hasta la próxima ida al súper."
-        )
-
-    if any(word in q for word in ["rojo", "color", "riesgo alto", "índice"]):
-        return (
-            "El color rojo significa **alerta operativa**. No quiere decir que el sistema falló; significa que esa combinación SKU/CEDI requiere atención.\n\n"
-            "En este proyecto, el rojo suele aparecer cuando el modelo estima alta probabilidad de quiebre o cuando la pérdida esperada es elevada. "
-            "El objetivo del color es reducir carga cognitiva: el usuario no necesita leer toda la tabla; primero mira dónde está el riesgo."
-        )
-
-    if any(word in q for word in ["no siempre", "por qué no", "mover", "transferir"]):
-        return (
-            "No siempre conviene mover inventario porque transferir también cuesta.\n\n"
-            "El motor compara dos cosas:\n"
-            "1. **Pérdida esperada si no actúas**.\n"
-            "2. **Costo de transferir inventario**.\n\n"
-            "Si el costo logístico es mayor que la pérdida evitada, mover inventario destruye valor. Además, el sistema revisa que el CEDI origen no quede desprotegido."
-        )
-
-    if any(word in q for word in ["costo", "almacenamiento", "reducir", "ahorro"]):
-        return (
-            "Para reducir costo, usa los filtros de CEDI, SKU y acción recomendada. Busca casos donde el **beneficio neto** sea positivo y alto.\n\n"
-            "La idea no es mover todo, sino mover donde el retorno sea claro. En términos ejecutivos: prioriza acciones con alta pérdida evitada, bajo costo de transferencia y sin afectar al CEDI origen.\n\n"
-            f"Top alertas actuales:\n{top_context}"
-        )
-
-    if any(word in q for word in ["arquitectura", "gcp", "cloud", "técnico", "tecnico"]):
-        return (
-            "La arquitectura está separada por responsabilidades:\n\n"
-            "- **XGBoost** predice riesgo de quiebre.\n"
-            "- **Decision Engine** calcula costo-beneficio con reglas deterministas.\n"
-            "- **Agentes A2A-lite** interpretan, critican y explican.\n"
-            "- **Streamlit** traduce todo a una interfaz ejecutiva.\n\n"
-            "Para GCP, la ruta natural es BigQuery para datos, Vertex AI para entrenamiento/despliegue, Model Registry para versionado, Model Monitoring para drift y A2A/Agent Platform para agentes interoperables."
-        )
-
-    if any(word in q for word in ["modelo", "xgboost", "ml", "machine learning"]):
-        best_model = "N/D"
-        if not model_metrics.empty and "f1_risk" in model_metrics.columns:
-            best_model = model_metrics.sort_values("f1_risk", ascending=False).iloc[0].get("model", "N/D")
-        return (
-            f"El modelo se usa para estimar el riesgo de quiebre por SKU/CEDI. En las métricas actuales, el mejor desempeño por F1 de riesgo aparece como **{best_model}**.\n\n"
-            "Aunque XGBoost es el modelo elegido para defensa técnica, lo importante es que el pipeline compara modelos y no decide por intuición. "
-            "La métrica clave no es solo accuracy; en inventario importa mucho el **recall de riesgo**, porque dejar pasar quiebres puede causar venta perdida."
-        )
-
-    return (
-        "Puedo ayudarte a interpretar el dashboard desde tres ángulos:\n\n"
-        "1. **Negocio:** qué producto está en riesgo, cuánto se perdería y qué acción conviene.\n"
-        "2. **Técnico:** cómo se conectan XGBoost, decision engine y agentes.\n"
-        "3. **Operativo:** qué CEDI/SKU priorizar hoy.\n\n"
-        f"Resumen de alertas actuales:\n{top_context}"
-    )
-
-
-
-def get_gemini_answer(question: str) -> Optional[str]:
-    """Respuesta opcional con Gemini vía LangChain.
-
-    Si no hay API key o falta la librería, regresa None y se usa fallback local.
-    """
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or st.secrets.get("GEMINI_API_KEY", None) if hasattr(st, "secrets") else None
-    if not api_key:
-        return None
-    try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0.2,
-            google_api_key=api_key,
-        )
-        context = build_context_summary()
-        system_prompt = f"""
-Eres ExecSupplyAI, un agente ejecutivo de Supply Chain para Grupo Herdez.
-
-Tu misión:
-Explicar de forma clara y útil el dashboard Herdez Smart-Supply a usuarios sin conocimiento técnico.
-
-Límites:
-- No inventes datos.
-- Usa solo el contexto proporcionado.
-- Si no hay información suficiente, dilo.
-- Explica con analogías simples.
-- Responde en español profesional y claro.
-
-Contexto de datos filtrados:
-Alertas visibles: {len(filtered)}
-Riesgo promedio: {pct(avg_risk)}
-Pérdida esperada agregada: {money(expected_loss)}
-Beneficio neto agregado: {money(net_benefit)}
-Top alertas:
-{context}
-"""
-        response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=question)])
-        return response.content
-    except Exception:
-        return None
-
-
-with st.container(border=True):
-    use_gemini = st.toggle("Usar Gemini para respuestas extendidas si hay API key", value=False)
-    st.caption("Si Gemini no está disponible, el chat usa un modo local basado en reglas y datos del dashboard.")
-
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {
-                "role": "assistant",
-                "content": "Hola, soy ExecSupplyAI. Puedo explicarte las alertas, los costos, el modelo y la arquitectura. Prueba una pregunta del Centro de Control Guiado o escribe la tuya.",
-            }
-        ]
-
-    pending = st.session_state.pop("pending_question", None)
-    if pending:
-        st.session_state.messages.append({"role": "user", "content": pending})
-        answer = get_gemini_answer(pending) if use_gemini else None
-        if not answer:
-            answer = local_chat_answer(pending)
-        st.session_state.messages.append({"role": "assistant", "content": answer})
-
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    user_question = st.chat_input("Pregunta algo como: ¿cuál es la alerta más importante y por qué?")
-    if user_question:
-        st.session_state.messages.append({"role": "user", "content": user_question})
-        with st.chat_message("user"):
-            st.markdown(user_question)
-        with st.chat_message("assistant"):
-            with st.spinner("Analizando contexto del dashboard..."):
-                answer = get_gemini_answer(user_question) if use_gemini else None
-                if not answer:
-                    answer = local_chat_answer(user_question)
-                st.markdown(answer)
-        st.session_state.messages.append({"role": "assistant", "content": answer})
-
-
-# ============================================================
-# 16. FOOTER
-# ============================================================
-
-st.markdown(
-    f"""
-    <div class="footer-note">
-        Herdez Smart-Supply · Prototipo local-first · Artefactos leídos desde: <code>{OUTPUTS_DIR}</code><br>
-        Pipeline: EDA → XGBoost → Decision Engine → Agentes A2A-lite → Dashboard Ejecutivo
-    </div>
-    """,
-    unsafe_allow_html=True,
+st.caption(
+    "Herdez Smart-Supply | El modelo predice, el decision engine decide con reglas y el agente explica. "
+    "Diseñado para demostrar Applied AI con enfoque negocio + arquitectura."
 )
