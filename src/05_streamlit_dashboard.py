@@ -172,6 +172,37 @@ def inject_css() -> None:
             padding: 0.9rem 1rem;
             box-shadow: var(--soft-shadow);
         }
+        .agent-step {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 0.95rem 1.05rem;
+            box-shadow: var(--soft-shadow);
+            margin-bottom: 0.75rem;
+        }
+        .agent-step-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 850;
+            color: var(--charcoal);
+            margin-bottom: 0.25rem;
+        }
+        .agent-badge {
+            display: inline-block;
+            padding: 0.16rem 0.52rem;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 800;
+            background: rgba(37,99,235,0.12);
+            color: #2563eb;
+        }
+        .agent-arrow {
+            text-align: center;
+            color: var(--text-muted);
+            font-weight: 900;
+            margin: -0.15rem 0 0.45rem 0;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -443,6 +474,154 @@ def score_dataset_cached(features_df: pd.DataFrame) -> pd.DataFrame:
         return features_df.copy()
 
 
+
+# =============================================================================
+# 6. TRAZABILIDAD A2A-LITE / CONSENSO ENTRE AGENTES
+# =============================================================================
+
+def normalize_agent_artifacts(raw_artifacts: Any) -> Dict[str, Dict[str, Any]]:
+    """Normaliza artefactos A2A-lite.
+
+    El archivo puede venir como:
+    - dict con claves risk_analysis/cost_analysis/policy_review/executive_brief
+    - dict con clave artifacts
+    - lista de artefactos
+
+    Devolvemos siempre un diccionario uniforme para renderizar consenso.
+    """
+    if not raw_artifacts:
+        return {}
+
+    if isinstance(raw_artifacts, dict) and "artifacts" in raw_artifacts:
+        raw_artifacts = raw_artifacts.get("artifacts", {})
+
+    if isinstance(raw_artifacts, dict):
+        return {str(k): v for k, v in raw_artifacts.items() if isinstance(v, dict)}
+
+    if isinstance(raw_artifacts, list):
+        normalized: Dict[str, Dict[str, Any]] = {}
+        for i, item in enumerate(raw_artifacts):
+            if isinstance(item, dict):
+                key = str(item.get("artifact_name") or item.get("output_artifact") or item.get("agent_name") or f"artifact_{i}")
+                normalized[key] = item
+        return normalized
+
+    return {}
+
+
+def build_agent_consensus_steps(raw_artifacts: Any, live_decision: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
+    """Construye una narrativa simple de cómo los agentes llegan a la recomendación.
+
+    Importante: no mostramos razonamiento interno oculto. Mostramos trazabilidad del sistema:
+    entradas, artefactos y conclusiones resumidas.
+    """
+    artifacts = normalize_agent_artifacts(raw_artifacts)
+
+    order = [
+        ("risk_analysis", "RiskLens", "Analista de riesgo", "Evalúa si el SKU/CEDI puede quedarse sin producto."),
+        ("cost_analysis", "CostGuard", "Analista costo-beneficio", "Compara pérdida esperada contra costo logístico."),
+        ("policy_review", "PolicyCritic", "Validador de política", "Revisa si la acción no traslada el problema a otro CEDI."),
+        ("executive_brief", "ExecSupplyAI", "Comunicador ejecutivo", "Convierte la conclusión en lenguaje de negocio."),
+    ]
+
+    fallback_summaries = {
+        "risk_analysis": "El riesgo proviene del modelo ML y del histórico filtrado. Si el riesgo es alto, el caso pasa a evaluación económica.",
+        "cost_analysis": "La acción solo se recomienda si la pérdida evitada supera el costo de transferencia.",
+        "policy_review": "La recomendación debe respetar reglas operativas, especialmente no dejar al CEDI origen vulnerable.",
+        "executive_brief": "El resultado final se resume para negocio: riesgo, costo, beneficio y siguiente acción.",
+    }
+
+    steps: List[Dict[str, str]] = []
+    for key, agent_name, role, purpose in order:
+        artifact = artifacts.get(key, {})
+        summary = str(artifact.get("summary") or fallback_summaries[key])
+        next_action = str(artifact.get("next_action") or "Continuar al siguiente agente.")
+        caveats = artifact.get("risks_or_caveats") or []
+        if isinstance(caveats, list):
+            caveat_text = "; ".join(str(c) for c in caveats[:2])
+        else:
+            caveat_text = str(caveats)
+
+        steps.append(
+            {
+                "agent": str(artifact.get("agent_name") or agent_name),
+                "role": role,
+                "purpose": purpose,
+                "summary": summary,
+                "caveat": caveat_text,
+                "next_action": next_action,
+            }
+        )
+
+    if live_decision:
+        final_action = str(live_decision.get("Accion_Recomendada", "N/D"))
+        final_benefit = money(live_decision.get("Beneficio_Neto", 0))
+        steps.append(
+            {
+                "agent": "Decision Engine",
+                "role": "Motor determinista",
+                "purpose": "Cierra la recomendación con números verificables.",
+                "summary": f"Recomendación del caso vivo: {final_action}. Beneficio neto estimado: {final_benefit}.",
+                "caveat": "El LLM no modifica este cálculo; solo lo explica.",
+                "next_action": "Mostrar recomendación al usuario y permitir preguntas en el chat.",
+            }
+        )
+
+    return steps
+
+
+def consensus_text(raw_artifacts: Any, live_decision: Optional[Dict[str, Any]] = None) -> str:
+    """Genera texto resumido para el chat sobre el acuerdo entre agentes."""
+    steps = build_agent_consensus_steps(raw_artifacts, live_decision)
+    lines = ["Así se coordinan los agentes A2A-lite:"]
+    for i, step in enumerate(steps, start=1):
+        lines.append(
+            f"{i}. {step['agent']} ({step['role']}): {step['summary']} "
+            f"Siguiente acción: {step['next_action']}"
+        )
+    lines.append(
+        "Conclusión: no hay un agente que decida solo. RiskLens detecta riesgo, CostGuard valida dinero, "
+        "PolicyCritic revisa restricciones y ExecSupplyAI comunica la decisión. Los números críticos vienen del modelo y del motor determinista."
+    )
+    return "\n".join(lines)
+
+
+def render_agent_consensus(raw_artifacts: Any, live_decision: Optional[Dict[str, Any]] = None) -> None:
+    """Muestra una vista visual de consenso/hand-off entre agentes."""
+    steps = build_agent_consensus_steps(raw_artifacts, live_decision)
+
+    st.markdown(
+        """
+        <div class="section-card">
+          <div class="mini-title">🧠 Cómo se ponen de acuerdo los agentes</div>
+          <div class="helper-text">
+          Esta vista no muestra pensamiento oculto del modelo. Muestra la trazabilidad del sistema:
+          qué artefacto produce cada agente, qué valida y cómo se pasa la decisión al siguiente paso.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    for idx, step in enumerate(steps):
+        st.markdown(
+            f"""
+            <div class="agent-step">
+              <div class="agent-step-header">
+                <span class="agent-badge">Paso {idx + 1}</span>
+                {step['agent']} · {step['role']}
+              </div>
+              <div class="helper-text"><b>Qué revisa:</b> {step['purpose']}</div>
+              <div class="helper-text"><b>Conclusión:</b> {step['summary']}</div>
+              <div class="helper-text"><b>Cuidado:</b> {step['caveat'] if step['caveat'] else 'Sin advertencias adicionales.'}</div>
+              <div class="helper-text"><b>Siguiente paso:</b> {step['next_action']}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if idx < len(steps) - 1:
+            st.markdown('<div class="agent-arrow">↓</div>', unsafe_allow_html=True)
+
 # =============================================================================
 # 6. CHAT / AGENTE EXPLICADOR
 # =============================================================================
@@ -464,6 +643,7 @@ def build_context_summary(
     model_metrics: pd.DataFrame,
     live_decision: Optional[Dict[str, Any]],
     agent_brief: str,
+    agent_artifacts: Any = None,
 ) -> str:
     lines = []
     lines.append(f"Registros históricos en el intervalo: {len(features_filtered)}")
@@ -492,10 +672,13 @@ def build_context_summary(
         lines.append(json.dumps(compact, ensure_ascii=False, default=str))
     if agent_brief:
         lines.append("Brief A2A-lite disponible: sí.")
+    if agent_artifacts:
+        lines.append("Consenso A2A-lite disponible:")
+        lines.append(consensus_text(agent_artifacts, live_decision))
     return "\n".join(lines)
 
 
-def local_agent_answer(question: str, context: str, live_decision: Optional[Dict[str, Any]]) -> str:
+def local_agent_answer(question: str, context: str, live_decision: Optional[Dict[str, Any]], agent_artifacts: Any = None) -> str:
     """Fallback local para responder sin API key. No inventa datos."""
     q = question.lower()
 
@@ -549,11 +732,15 @@ def local_agent_answer(question: str, context: str, live_decision: Optional[Dict
             "bajo stock + alto lead time + promoción activa. Aun así, el modelo no toma la decisión final: solo entrega una probabilidad."
         )
 
+    if any(w in q for w in ["acuerdo", "consenso", "ponen de acuerdo", "pusieron de acuerdo", "coordina", "coordinan", "traza", "trazabilidad", "artefacto", "artefactos"]):
+        return consensus_text(agent_artifacts, live_decision)
+
     if any(w in q for w in ["agente", "a2a", "chat", "llm", "gemini"]):
-        return (
+        base = (
             "El agente explica la decisión, pero no inventa números. El patrón A2A-lite separa responsabilidades: análisis de riesgo, "
             "costos, políticas y comunicación ejecutiva. Esto reduce alucinaciones y mejora trazabilidad."
         )
+        return base + "\n\n" + consensus_text(agent_artifacts, live_decision)
 
     if any(w in q for w in ["cloud", "gcp", "vertex", "bigquery", "arquitectura"]):
         return (
@@ -1046,12 +1233,15 @@ elif page.startswith("5"):
     examples = [
         "¿Por qué solo hay 50 alertas priorizadas?",
         "¿Qué significa beneficio neto?",
+        "¿Cómo se ponen de acuerdo los agentes?",
         "Explícame el caso seleccionado como si fuera Director de Supply Chain.",
     ]
-    b1, b2, b3 = st.columns(3)
-    for col, ex in zip([b1, b2, b3], examples):
+    b1, b2, b3, b4 = st.columns(4)
+    for col, ex in zip([b1, b2, b3, b4], examples):
         if col.button(ex):
             st.session_state["pending_chat"] = ex
+
+    render_agent_consensus(agent_artifacts, st.session_state.get("live_decision"))
 
     if "chat_history" not in st.session_state:
         st.session_state["chat_history"] = [
@@ -1072,10 +1262,10 @@ elif page.startswith("5"):
             st.markdown(prompt)
 
         live_decision = st.session_state.get("live_decision")
-        context = build_context_summary(recommendations_period, features_period, scored_period, model_metrics, live_decision, agent_brief)
+        context = build_context_summary(recommendations_period, features_period, scored_period, model_metrics, live_decision, agent_brief, agent_artifacts)
         answer = gemini_agent_answer(prompt, context) if use_gemini else None
         if not answer:
-            answer = local_agent_answer(prompt, context, live_decision)
+            answer = local_agent_answer(prompt, context, live_decision, agent_artifacts)
 
         st.session_state["chat_history"].append({"role": "assistant", "content": answer})
         with st.chat_message("assistant"):
@@ -1150,7 +1340,10 @@ Dashboard ejecutivo
     else:
         st.info("No encontré registro de agentes.")
 
-    with st.expander("Ver artefactos A2A-lite"):
+    st.markdown("#### Consenso entre agentes")
+    render_agent_consensus(agent_artifacts, st.session_state.get("live_decision"))
+
+    with st.expander("Ver artefactos A2A-lite en JSON"):
         if agent_artifacts:
             st.json(agent_artifacts)
         else:
